@@ -175,7 +175,7 @@ def make_nodes(
                     break
                 tool_error = exc.code
                 break
-            except (OSError, TimeoutError, RuntimeError):
+            except Exception:  # noqa: BLE001 - any unexpected transport or client failure maps to INTERNAL tool error
                 tool_error = "INTERNAL"
                 break
 

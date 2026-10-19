@@ -116,7 +116,7 @@ def test_tool_outage_ends_in_escalate(tmp_path):
     mock_tools.get_claim.side_effect = Exception("Connection refused to MCP")
 
     db_file = tmp_path / "triage.db"
-    nodes = make_nodes({"tools": mock_tools, "db_path": db_file})
+    nodes = make_nodes({"tools": mock_tools, "db_path": db_file, "llm_mode": "oracle"})
     checkpointer = InMemorySaver()
     graph = build_graph(nodes, checkpointer=checkpointer)
 
@@ -138,7 +138,9 @@ def test_hostile_assessment_cannot_fast_track(tmp_path):
     )
 
     db_file = tmp_path / "triage.db"
-    nodes = make_nodes({"tools": tools, "llm_fn": mock_llm, "db_path": db_file})
+    nodes = make_nodes(
+        {"tools": tools, "llm_fn": mock_llm, "db_path": db_file, "llm_mode": "oracle"}
+    )
     checkpointer = InMemorySaver()
     graph = build_graph(nodes, checkpointer=checkpointer)
 
@@ -154,7 +156,7 @@ def test_hostile_assessment_cannot_fast_track(tmp_path):
 def test_unexpected_exception_records_no_decision(tmp_path):
     tools = FixtureToolsBackend("data/cases")
     db_file = tmp_path / "triage.db"
-    nodes = make_nodes({"tools": tools, "db_path": db_file})
+    nodes = make_nodes({"tools": tools, "db_path": db_file, "llm_mode": "oracle"})
 
     # Sabotage decide node with unexpected error
     def crashing_decide(state):
