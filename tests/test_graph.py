@@ -208,7 +208,31 @@ def test_restart_safety_across_sqlite_checkpointer(tmp_path):
     assert r2["review"]["action"] == "CONFIRM"
 
 
-@pytest.mark.xfail(reason="Service-level idempotency implemented in T13")
-def test_rerunning_claim_with_pending_review_creates_no_second_thread():
-    # Will be tested and passed in T13 with Service.start_triage
-    assert False
+def test_rerunning_claim_with_pending_review_creates_no_second_thread(tmp_path):
+    from triage.service import TriageService
+
+    db_file = tmp_path / "triage.db"
+    cp_file = tmp_path / "checkpoint.db"
+    tools = FixtureToolsBackend("data/cases")
+
+    service = TriageService(
+        db_path=db_file,
+        checkpoint_db_path=cp_file,
+        tools=tools,
+        llm_mode="oracle",
+    )
+
+    # CLM70000009 pauses at review (STANDARD_REVIEW)
+    res1 = service.start_triage("CLM70000009")
+    assert res1["status"] == "awaiting_review"
+    thread1 = res1["thread_id"]
+
+    # Re-running the same claim with pending review returns the same thread ID and creates no second thread
+    res2 = service.start_triage("CLM70000009")
+    assert res2["status"] == "awaiting_review"
+    assert res2["thread_id"] == thread1
+
+    # Exactly one pending review exists
+    pending = service.list_pending()
+    assert len(pending) == 1
+    assert pending[0]["thread_id"] == thread1
