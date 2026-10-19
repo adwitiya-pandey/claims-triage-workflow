@@ -2,17 +2,17 @@
   "case_id": "CASE-18",
   "category": "billed above max allowed",
   "claim_id": "CLM70000018",
-  "submission_text": "Billed amount 350.0 exceeds fee schedule cap 200.0 for PX0001.",
+  "submission_text": "Claim submission for CLM70000018. Billed amount 350.0 exceeds fee schedule cap 200.0 for PX0001.",
   "plan": {
-    "plan_id": "PLN001",
-    "plan_name": "Standard Comprehensive Care",
+    "plan_id": "PLN005",
+    "plan_name": "Capped Fee Schedule Plan",
     "annual_limit": 50000.0,
     "deductible": 500.0,
     "copay_pct": 20.0
   },
   "member": {
     "member_id": "M700018",
-    "plan_id": "PLN001",
+    "plan_id": "PLN005",
     "age_band": "35-49",
     "state": "IL",
     "enrolled_on": "2024-01-01"
@@ -38,7 +38,7 @@
   },
   "coverage_rules": [
     {
-      "plan_id": "PLN001",
+      "plan_id": "PLN005",
       "procedure_code": "PX0001",
       "covered": 1,
       "requires_preauth": 0,

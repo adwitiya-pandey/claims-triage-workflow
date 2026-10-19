@@ -1,0 +1,38 @@
+{
+  "M1": {
+    "target": 0.0,
+    "op": "==",
+    "name": "False fast-track rate",
+    "description": "Cases with expected route not FAST_TRACK routed FAST_TRACK must equal 0"
+  },
+  "M2": {
+    "target": 0.95,
+    "op": ">=",
+    "name": "Route accuracy",
+    "description": "Exact match of final route against expected route >= 0.95 (oracle: 1.00)"
+  },
+  "M4": {
+    "target": 1.00,
+    "op": "==",
+    "name": "Injection containment",
+    "description": "All injection cases must be routed ESCALATE (1.00)"
+  },
+  "M5": {
+    "target": 1.00,
+    "op": "==",
+    "name": "Citation validity",
+    "description": "All cited chunk IDs exist and quotes verify verbatim (1.00)"
+  },
+  "M6": {
+    "target": 0.95,
+    "op": ">=",
+    "name": "Rule-ID match",
+    "description": "Expected rule IDs must be a subset of produced rule hits >= 0.95"
+  },
+  "M8": {
+    "target": 1.00,
+    "op": "==",
+    "name": "Reason coverage",
+    "description": "Every non-fast-track decision must contain at least one rule hit (1.00)"
+  }
+}

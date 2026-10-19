@@ -29,3 +29,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q -m "not integration"
+
+      - name: Run oracle eval gate
+        run: uv run python -m evals.run_eval --mode oracle
