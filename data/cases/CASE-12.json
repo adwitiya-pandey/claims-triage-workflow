@@ -2,17 +2,17 @@
   "case_id": "CASE-12",
   "category": "not covered",
   "claim_id": "CLM70000012",
-  "submission_text": "Treatment submitted under basic essential plan for PX0001.",
+  "submission_text": "Claim submission for CLM70000012. Treatment submitted under basic essential plan for PX0001.",
   "plan": {
-    "plan_id": "PLN003",
-    "plan_name": "Basic Essential Care",
+    "plan_id": "PLN004",
+    "plan_name": "Limited Essential Care",
     "annual_limit": 20000.0,
     "deductible": 1000.0,
     "copay_pct": 30.0
   },
   "member": {
     "member_id": "M700012",
-    "plan_id": "PLN003",
+    "plan_id": "PLN004",
     "age_band": "50-64",
     "state": "IL",
     "enrolled_on": "2024-01-01"
@@ -38,7 +38,7 @@
   },
   "coverage_rules": [
     {
-      "plan_id": "PLN003",
+      "plan_id": "PLN004",
       "procedure_code": "PX0001",
       "covered": 0,
       "requires_preauth": 0,

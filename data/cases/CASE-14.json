@@ -2,17 +2,17 @@
   "case_id": "CASE-14",
   "category": "coverage rule unknown",
   "claim_id": "CLM70000014",
-  "submission_text": "Submitted service PX0008 with non-standard contract.",
+  "submission_text": "Claim submission for CLM70000014. Submitted service PX0008 with non-standard contract.",
   "plan": {
-    "plan_id": "PLN001",
-    "plan_name": "Standard Comprehensive Care",
+    "plan_id": "PLN009",
+    "plan_name": "Special Non-Standard Contract",
     "annual_limit": 50000.0,
     "deductible": 500.0,
     "copay_pct": 20.0
   },
   "member": {
     "member_id": "M700014",
-    "plan_id": "PLN001",
+    "plan_id": "PLN009",
     "age_band": "35-49",
     "state": "IL",
     "enrolled_on": "2024-01-01"
