@@ -104,15 +104,23 @@ def get_decision(db_path: Path | str, claim_id: str, version: int) -> dict[str, 
         conn.close()
 
 
-def list_decisions(db_path: Path | str, claim_id: str) -> list[dict[str, Any]]:
-    """List all decision versions for a claim in ascending order."""
+def list_decisions(
+    db_path: Path | str, claim_id: str, newest_first: bool = True
+) -> list[dict[str, Any]]:
+    """List all decision versions for a claim."""
     conn = _get_connection(db_path)
     try:
         init_db(db_path)
-        cur = conn.execute(
-            "SELECT record_json FROM decisions WHERE claim_id = ? ORDER BY version ASC",
-            (claim_id,),
-        )
+        if newest_first:
+            cur = conn.execute(
+                "SELECT record_json FROM decisions WHERE claim_id = ? ORDER BY version DESC",
+                (claim_id,),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT record_json FROM decisions WHERE claim_id = ? ORDER BY version ASC",
+                (claim_id,),
+            )
         return [json.loads(row["record_json"]) for row in cur.fetchall()]
     finally:
         conn.close()
@@ -176,5 +184,41 @@ def list_pending_reviews(db_path: Path | str) -> list[dict[str, Any]]:
             "SELECT * FROM reviews WHERE status = 'awaiting' ORDER BY created_at ASC"
         )
         return [dict(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_review_by_thread(db_path: Path | str, thread_id: str) -> dict[str, Any] | None:
+    """Retrieve a review session by thread_id."""
+    conn = _get_connection(db_path)
+    try:
+        init_db(db_path)
+        cur = conn.execute("SELECT * FROM reviews WHERE thread_id = ?", (thread_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_latest_version(db_path: Path | str, claim_id: str) -> int:
+    """Get the highest version number for a claim across decisions and reviews."""
+    conn = _get_connection(db_path)
+    try:
+        init_db(db_path)
+        cur1 = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) AS max_v FROM decisions WHERE claim_id = ?",
+            (claim_id,),
+        )
+        row1 = cur1.fetchone()
+        v1 = row1["max_v"] if row1 else 0
+
+        cur2 = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) AS max_v FROM reviews WHERE claim_id = ?",
+            (claim_id,),
+        )
+        row2 = cur2.fetchone()
+        v2 = row2["max_v"] if row2 else 0
+
+        return max(v1, v2)
     finally:
         conn.close()
