@@ -195,12 +195,20 @@ def generate_json(
         claim_id = match.group(0) if match else None
 
         gold_dict: dict[str, Any] = {}
-        if claim_id and CASES_DIR.exists():
-            for cf in CASES_DIR.glob("*.json"):
+        if CASES_DIR.exists():
+            for cf in sorted(CASES_DIR.glob("*.json")):
                 try:
                     with open(cf, "r", encoding="utf-8") as f:
                         c_data = json.load(f)
-                    if c_data.get("claim_id") == claim_id:
+                    matched = False
+                    if claim_id and c_data.get("claim_id") == claim_id:
+                        matched = True
+                    elif not claim_id:
+                        sub_text = c_data.get("submission_text", "").strip()
+                        if sub_text and sub_text in user_content:
+                            matched = True
+
+                    if matched:
                         if node == "extract":
                             gold_dict = c_data.get("gold_extraction", {})
                         elif node == "assess":
