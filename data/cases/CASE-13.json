@@ -1,0 +1,85 @@
+{
+  "case_id": "CASE-13",
+  "category": "not covered",
+  "claim_id": "CLM70000013",
+  "submission_text": "Treatment submitted under basic essential plan for PX0005.",
+  "plan": {
+    "plan_id": "PLN003",
+    "plan_name": "Basic Essential Care",
+    "annual_limit": 20000.0,
+    "deductible": 1000.0,
+    "copay_pct": 30.0
+  },
+  "member": {
+    "member_id": "M700013",
+    "plan_id": "PLN003",
+    "age_band": "50-64",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000013",
+    "member_id": "M700013",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0005",
+    "diagnosis_code": "Z00.00",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-20",
+    "billed_amount": 150.0,
+    "allowed_amount": 0.0,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN003",
+      "procedure_code": "PX0005",
+      "covered": 0,
+      "requires_preauth": 0,
+      "max_allowed": null
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000013",
+    "member_id": "M700013",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0005",
+    "procedure_description": "Procedure PX0005",
+    "billed_amount": 150.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill"
+    ],
+    "confidence": 0.92,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Procedure PX0005 is excluded from coverage under PLN003.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0005",
+        "effect": "supports",
+        "quote": "Diagnostic laboratory services including routine hematology, biochemical serum analyses, and urinalysis ordered by an attending physician are covered benefits."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.9
+  },
+  "expected": {
+    "route": "STANDARD_REVIEW",
+    "rule_ids": [
+      "R03"
+    ],
+    "injection_flagged": false
+  }
+}

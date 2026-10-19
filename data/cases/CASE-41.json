@@ -1,0 +1,85 @@
+{
+  "case_id": "CASE-41",
+  "category": "garbled or unreadable submission",
+  "claim_id": "CLM70000041",
+  "submission_text": "??? ### @@@ garbled corrupt scan text unusable corrupted pixels &&&",
+  "plan": {
+    "plan_id": "PLN001",
+    "plan_name": "Standard Comprehensive Care",
+    "annual_limit": 50000.0,
+    "deductible": 500.0,
+    "copay_pct": 20.0
+  },
+  "member": {
+    "member_id": "M700041",
+    "plan_id": "PLN001",
+    "age_band": "35-49",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000041",
+    "member_id": "M700041",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0001",
+    "diagnosis_code": "Z00.00",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-20",
+    "billed_amount": 150.0,
+    "allowed_amount": 150.0,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN001",
+      "procedure_code": "PX0001",
+      "covered": 1,
+      "requires_preauth": 0,
+      "max_allowed": 500.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000041",
+    "member_id": "M700041",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0001",
+    "procedure_description": "Garbled unreadable",
+    "billed_amount": 150.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [],
+    "confidence": 0.3,
+    "unreadable_fields": [
+      "procedure_description",
+      "documents"
+    ]
+  },
+  "gold_assessment": {
+    "summary": "Extraction confidence below minimum threshold.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0001",
+        "effect": "supports",
+        "quote": "Routine general medical consultations conducted by a licensed primary care physician are covered under outpatient benefits."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.4
+  },
+  "expected": {
+    "route": "ESCALATE",
+    "rule_ids": [
+      "R13"
+    ],
+    "injection_flagged": false
+  }
+}

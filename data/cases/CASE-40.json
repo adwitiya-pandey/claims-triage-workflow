@@ -1,0 +1,85 @@
+{
+  "case_id": "CASE-40",
+  "category": "status already PAID",
+  "claim_id": "CLM70000040",
+  "submission_text": "Duplicate submission attempt for an adjudicated and settled claim.",
+  "plan": {
+    "plan_id": "PLN001",
+    "plan_name": "Standard Comprehensive Care",
+    "annual_limit": 50000.0,
+    "deductible": 500.0,
+    "copay_pct": 20.0
+  },
+  "member": {
+    "member_id": "M700040",
+    "plan_id": "PLN001",
+    "age_band": "18-34",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000040",
+    "member_id": "M700040",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0001",
+    "diagnosis_code": "Z00.00",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-20",
+    "billed_amount": 150.0,
+    "allowed_amount": 150.0,
+    "paid_amount": 150.0,
+    "status": "PAID"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN001",
+      "procedure_code": "PX0001",
+      "covered": 1,
+      "requires_preauth": 0,
+      "max_allowed": 500.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000040",
+    "member_id": "M700040",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0001",
+    "procedure_description": "Routine consultation",
+    "billed_amount": 150.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill"
+    ],
+    "confidence": 0.95,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Claim status is already PAID; nothing to triage.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0001",
+        "effect": "supports",
+        "quote": "Routine general medical consultations conducted by a licensed primary care physician are covered under outpatient benefits."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.95
+  },
+  "expected": {
+    "route": "ESCALATE",
+    "rule_ids": [
+      "R16"
+    ],
+    "injection_flagged": false
+  }
+}

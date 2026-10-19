@@ -1,0 +1,99 @@
+{
+  "case_id": "CASE-28",
+  "category": "annual limit exhausted",
+  "claim_id": "CLM70000028",
+  "submission_text": "Member exhausted annual benefit limits earlier this year for CLM70000028.",
+  "plan": {
+    "plan_id": "PLN003",
+    "plan_name": "Basic Essential Care",
+    "annual_limit": 20000.0,
+    "deductible": 1000.0,
+    "copay_pct": 30.0
+  },
+  "member": {
+    "member_id": "M700028",
+    "plan_id": "PLN003",
+    "age_band": "65+",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000028",
+    "member_id": "M700028",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0005",
+    "diagnosis_code": "Z00.00",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-20",
+    "billed_amount": 250.0,
+    "allowed_amount": 250.0,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN003",
+      "procedure_code": "PX0005",
+      "covered": 1,
+      "requires_preauth": 0,
+      "max_allowed": 500.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [
+    {
+      "claim_id": "CLM70000088",
+      "member_id": "M700028",
+      "provider_id": "PRV0001",
+      "procedure_code": "PX0009",
+      "diagnosis_code": "S82.1",
+      "service_date": "2026-02-15",
+      "submitted_on": "2026-02-20",
+      "billed_amount": 20000.0,
+      "allowed_amount": 20000.0,
+      "paid_amount": 20000.0,
+      "status": "PAID"
+    }
+  ],
+  "gold_extraction": {
+    "claim_id": "CLM70000028",
+    "member_id": "M700028",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0005",
+    "procedure_description": "Procedure PX0005",
+    "billed_amount": 250.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill"
+    ],
+    "confidence": 0.95,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Member annual limit has been exhausted by previous claims.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0005",
+        "effect": "supports",
+        "quote": "Diagnostic laboratory services including routine hematology, biochemical serum analyses, and urinalysis ordered by an attending physician are covered benefits."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.92
+  },
+  "expected": {
+    "route": "STANDARD_REVIEW",
+    "rule_ids": [
+      "R09"
+    ],
+    "injection_flagged": false
+  }
+}

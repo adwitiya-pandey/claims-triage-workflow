@@ -1,0 +1,86 @@
+{
+  "case_id": "CASE-17",
+  "category": "out of network",
+  "claim_id": "CLM70000017",
+  "submission_text": "Consultation with out of network provider PRV0003 for PX0003.",
+  "plan": {
+    "plan_id": "PLN001",
+    "plan_name": "Standard Comprehensive Care",
+    "annual_limit": 50000.0,
+    "deductible": 500.0,
+    "copay_pct": 20.0
+  },
+  "member": {
+    "member_id": "M700017",
+    "plan_id": "PLN001",
+    "age_band": "18-34",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0003",
+    "specialty": "Cardiology",
+    "state": "IL",
+    "network_status": "OUT_OF_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000017",
+    "member_id": "M700017",
+    "provider_id": "PRV0003",
+    "procedure_code": "PX0003",
+    "diagnosis_code": "I10",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-20",
+    "billed_amount": 280.0,
+    "allowed_amount": 200.0,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN001",
+      "procedure_code": "PX0003",
+      "covered": 1,
+      "requires_preauth": 0,
+      "max_allowed": 500.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000017",
+    "member_id": "M700017",
+    "provider_id": "PRV0003",
+    "procedure_code": "PX0003",
+    "procedure_description": "Procedure PX0003",
+    "billed_amount": 280.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill",
+      "referral"
+    ],
+    "confidence": 0.95,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Out of network provider rates apply.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0003",
+        "effect": "supports",
+        "quote": "Outpatient specialist medical consultations require a formal written referral from a licensed primary care provider prior to the appointment date."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.9
+  },
+  "expected": {
+    "route": "STANDARD_REVIEW",
+    "rule_ids": [
+      "R07"
+    ],
+    "injection_flagged": false
+  }
+}

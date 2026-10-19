@@ -1,0 +1,85 @@
+{
+  "case_id": "CASE-26",
+  "category": "late filing",
+  "claim_id": "CLM70000026",
+  "submission_text": "Untimely claim submission filed after 90 day limit from service.",
+  "plan": {
+    "plan_id": "PLN001",
+    "plan_name": "Standard Comprehensive Care",
+    "annual_limit": 50000.0,
+    "deductible": 500.0,
+    "copay_pct": 20.0
+  },
+  "member": {
+    "member_id": "M700026",
+    "plan_id": "PLN001",
+    "age_band": "18-34",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000026",
+    "member_id": "M700026",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0001",
+    "diagnosis_code": "Z00.00",
+    "service_date": "2026-01-10",
+    "submitted_on": "2026-05-01",
+    "billed_amount": 140.0,
+    "allowed_amount": 140.0,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN001",
+      "procedure_code": "PX0001",
+      "covered": 1,
+      "requires_preauth": 0,
+      "max_allowed": 500.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000026",
+    "member_id": "M700026",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0001",
+    "procedure_description": "Routine consultation",
+    "billed_amount": 140.0,
+    "service_date": "2026-01-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill"
+    ],
+    "confidence": 0.95,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Claim filed past the timely filing window of 90 days.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0001",
+        "effect": "supports",
+        "quote": "Routine general medical consultations conducted by a licensed primary care physician are covered under outpatient benefits."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.9
+  },
+  "expected": {
+    "route": "STANDARD_REVIEW",
+    "rule_ids": [
+      "R11"
+    ],
+    "injection_flagged": false
+  }
+}

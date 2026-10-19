@@ -1,0 +1,87 @@
+{
+  "case_id": "CASE-11",
+  "category": "preauth missing",
+  "claim_id": "CLM70000011",
+  "submission_text": "Elective procedure PX0009 performed at outpatient center. No preauthorization was obtained prior.",
+  "plan": {
+    "plan_id": "PLN001",
+    "plan_name": "Standard Comprehensive Care",
+    "annual_limit": 50000.0,
+    "deductible": 500.0,
+    "copay_pct": 20.0
+  },
+  "member": {
+    "member_id": "M700011",
+    "plan_id": "PLN001",
+    "age_band": "18-34",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000011",
+    "member_id": "M700011",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0009",
+    "diagnosis_code": "M25.5",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-25",
+    "billed_amount": 3500.0,
+    "allowed_amount": null,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN001",
+      "procedure_code": "PX0009",
+      "covered": 1,
+      "requires_preauth": 1,
+      "max_allowed": 5000.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000011",
+    "member_id": "M700011",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0009",
+    "procedure_description": "Procedure PX0009",
+    "billed_amount": 3500.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill"
+    ],
+    "confidence": 0.9,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Procedure PX0009 requires prior authorization which is absent.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0009",
+        "effect": "supports",
+        "quote": "Inpatient hospital admissions for surgical intervention require formal preauthorisation prior to scheduled hospital entry."
+      }
+    ],
+    "missing_items": [
+      "preauth_reference"
+    ],
+    "confidence": 0.9
+  },
+  "expected": {
+    "route": "STANDARD_REVIEW",
+    "rule_ids": [
+      "R04"
+    ],
+    "injection_flagged": false
+  }
+}

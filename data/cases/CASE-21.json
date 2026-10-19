@@ -1,0 +1,86 @@
+{
+  "case_id": "CASE-21",
+  "category": "high amount",
+  "claim_id": "CLM70000021",
+  "submission_text": "High value specialized clinical claim CLM70000021 for 11200.0.",
+  "plan": {
+    "plan_id": "PLN002",
+    "plan_name": "Premier Executive Care",
+    "annual_limit": 100000.0,
+    "deductible": 250.0,
+    "copay_pct": 10.0
+  },
+  "member": {
+    "member_id": "M700021",
+    "plan_id": "PLN002",
+    "age_band": "50-64",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0002",
+    "specialty": "Internal Medicine",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000021",
+    "member_id": "M700021",
+    "provider_id": "PRV0002",
+    "procedure_code": "PX0012",
+    "diagnosis_code": "C34.9",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-20",
+    "billed_amount": 11200.0,
+    "allowed_amount": 11200.0,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN002",
+      "procedure_code": "PX0012",
+      "covered": 1,
+      "requires_preauth": 1,
+      "max_allowed": 50000.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000021",
+    "member_id": "M700021",
+    "provider_id": "PRV0002",
+    "procedure_code": "PX0012",
+    "procedure_description": "Specialized procedure PX0012",
+    "billed_amount": 11200.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": "PA-7788",
+    "documents_present": [
+      "claim_form",
+      "itemized_bill",
+      "preauth_letter"
+    ],
+    "confidence": 0.95,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "High value procedure PX0012 exceeds high amount threshold.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0012",
+        "effect": "supports",
+        "quote": "Chemotherapy and specialized intravenous infusion therapies for oncology management require formal preauthorisation and approved treatment protocols."
+      }
+    ],
+    "missing_items": [],
+    "confidence": 0.95
+  },
+  "expected": {
+    "route": "ESCALATE",
+    "rule_ids": [
+      "R06"
+    ],
+    "injection_flagged": false
+  }
+}

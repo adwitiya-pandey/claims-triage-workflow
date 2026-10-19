@@ -1,0 +1,87 @@
+{
+  "case_id": "CASE-09",
+  "category": "preauth missing",
+  "claim_id": "CLM70000009",
+  "submission_text": "Elective procedure PX0004 performed at outpatient center. No preauthorization was obtained prior.",
+  "plan": {
+    "plan_id": "PLN001",
+    "plan_name": "Standard Comprehensive Care",
+    "annual_limit": 50000.0,
+    "deductible": 500.0,
+    "copay_pct": 20.0
+  },
+  "member": {
+    "member_id": "M700009",
+    "plan_id": "PLN001",
+    "age_band": "18-34",
+    "state": "IL",
+    "enrolled_on": "2024-01-01"
+  },
+  "provider": {
+    "provider_id": "PRV0001",
+    "specialty": "General Practice",
+    "state": "IL",
+    "network_status": "IN_NETWORK"
+  },
+  "claim": {
+    "claim_id": "CLM70000009",
+    "member_id": "M700009",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0004",
+    "diagnosis_code": "M25.5",
+    "service_date": "2026-05-10",
+    "submitted_on": "2026-05-25",
+    "billed_amount": 450.0,
+    "allowed_amount": null,
+    "paid_amount": null,
+    "status": "SUBMITTED"
+  },
+  "coverage_rules": [
+    {
+      "plan_id": "PLN001",
+      "procedure_code": "PX0004",
+      "covered": 1,
+      "requires_preauth": 1,
+      "max_allowed": 5000.0
+    }
+  ],
+  "notes": [],
+  "other_claims": [],
+  "gold_extraction": {
+    "claim_id": "CLM70000009",
+    "member_id": "M700009",
+    "provider_id": "PRV0001",
+    "procedure_code": "PX0004",
+    "procedure_description": "Procedure PX0004",
+    "billed_amount": 450.0,
+    "service_date": "2026-05-10",
+    "preauth_reference": null,
+    "documents_present": [
+      "claim_form",
+      "itemized_bill"
+    ],
+    "confidence": 0.9,
+    "unreadable_fields": []
+  },
+  "gold_assessment": {
+    "summary": "Procedure PX0004 requires prior authorization which is absent.",
+    "clauses": [
+      {
+        "chunk_id": "POL-PX0004",
+        "effect": "supports",
+        "quote": "Minor surgical procedures performed in an accredited outpatient clinic or surgical center are covered subject to preauthorisation verification."
+      }
+    ],
+    "missing_items": [
+      "preauth_reference"
+    ],
+    "confidence": 0.9
+  },
+  "expected": {
+    "route": "STANDARD_REVIEW",
+    "rule_ids": [
+      "R04"
+    ],
+    "injection_flagged": false
+  }
+}
