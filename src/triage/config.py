@@ -15,6 +15,8 @@ class TriageConfig:
 
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.8-flash"
+    EMBEDDING_MODEL: str = "gemini-embedding-001"
+    RETRIEVER: str = "bm25"
     LLM_MODE: str = "replay"
     CASSETTE_PATH: str = "data/cassettes/cassette.jsonl"
     CLAIMS_TOOLS_BACKEND: str = "fixture"
@@ -43,6 +45,8 @@ class TriageConfig:
         cfg = cls(
             GEMINI_API_KEY=os.getenv("GEMINI_API_KEY", ""),
             GEMINI_MODEL=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+            EMBEDDING_MODEL=os.getenv("EMBEDDING_MODEL", "gemini-embedding-001"),
+            RETRIEVER=os.getenv("RETRIEVER", "bm25"),
             LLM_MODE=os.getenv("LLM_MODE", "replay"),
             CASSETTE_PATH=os.getenv("CASSETTE_PATH", "data/cassettes/cassette.jsonl"),
             CLAIMS_TOOLS_BACKEND=os.getenv("CLAIMS_TOOLS_BACKEND", "fixture"),
@@ -76,6 +80,11 @@ class TriageConfig:
             raise ValueError(
                 f"GEMINI_API_KEY is required when LLM_MODE is '{self.LLM_MODE}'"
             )
+
+        if self.RETRIEVER not in {"bm25", "dense", "hybrid"}:
+            raise ValueError("RETRIEVER must be one of: bm25, dense, hybrid")
+        if not self.EMBEDDING_MODEL.strip():
+            raise ValueError("EMBEDDING_MODEL must not be empty")
 
         valid_backends = {"fixture", "mcp"}
         if self.CLAIMS_TOOLS_BACKEND not in valid_backends:

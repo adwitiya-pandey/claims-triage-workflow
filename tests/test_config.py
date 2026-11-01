@@ -14,6 +14,8 @@ def test_config_defaults(monkeypatch):
         "CLAIMS_MCP_URL",
         "CLAIMS_MCP_KEY",
         "CLAIMS_MCP_STDIO_CMD",
+        "RETRIEVER",
+        "EMBEDDING_MODEL",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -24,6 +26,8 @@ def test_config_defaults(monkeypatch):
     assert cfg.TIMELY_FILING_DAYS == 90
     assert cfg.MIN_EXTRACT_CONFIDENCE == 0.7
     assert cfg.TOP_K == 4
+    assert cfg.RETRIEVER == "bm25"
+    assert cfg.EMBEDDING_MODEL == "gemini-embedding-001"
 
 
 def test_config_validation_rules(monkeypatch):
@@ -72,3 +76,17 @@ def test_config_never_echoes_secrets(monkeypatch):
     assert "GEMINI_API_KEY=***" in repr_str
     assert "CLAIMS_MCP_KEY=***" in repr_str
     assert "TRIAGE_API_KEY=***" in repr_str
+
+
+def test_retriever_configuration_is_validated(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "replay")
+    monkeypatch.setenv("RETRIEVER", "hybrid")
+    monkeypatch.setenv("EMBEDDING_MODEL", "gemini-embedding-001")
+    config = TriageConfig.load()
+
+    assert config.RETRIEVER == "hybrid"
+    assert config.EMBEDDING_MODEL == "gemini-embedding-001"
+
+    monkeypatch.setenv("RETRIEVER", "unknown")
+    with pytest.raises(ValueError, match="RETRIEVER must be one of"):
+        TriageConfig.load()

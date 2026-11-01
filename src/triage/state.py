@@ -18,6 +18,10 @@ class TriageState(TypedDict, total=False):
     tool_error: str | None
     claim_missing: bool
     chunks: list[dict[str, Any]]
+    retrieval_trace: list[dict[str, Any]]
+    retriever_mode: str
+    retrieval_ms: float
+    guardrail_flags: list[str]
     assessment: dict[str, Any] | None
     route: str | None
     rule_hits: list[dict[str, Any]]
