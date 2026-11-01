@@ -3,9 +3,11 @@
 import hashlib
 import json
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 # Note: Only this file may import google.genai per security requirement S13
 from google import genai
@@ -21,6 +23,63 @@ class CassetteMiss(Exception):
         self.node = node
         self.key = key
         super().__init__(message)
+
+
+class ExecutionBudgetExceeded(RuntimeError):
+    """Raised when a graph run exceeds a configured execution budget."""
+
+    def __init__(self, budget: str, calls: int) -> None:
+        self.budget = budget
+        self.calls = calls
+        super().__init__(f"Execution budget exceeded: {budget}")
+
+
+@dataclass
+class _RunBudget:
+    """Per-invocation budget carried through synchronous node execution."""
+
+    deadline: float
+    max_llm_calls: int
+    llm_calls: int = 0
+
+
+_ACTIVE_BUDGET: ContextVar[_RunBudget | None] = ContextVar(
+    "triage_execution_budget", default=None
+)
+
+
+@contextmanager
+def execution_budget(
+    *, timeout_seconds: float, max_llm_calls: int
+) -> Iterator[_RunBudget]:
+    """Set a context-local wall-clock deadline and LLM call cap for one run."""
+    budget = _RunBudget(
+        deadline=time.monotonic() + timeout_seconds,
+        max_llm_calls=max_llm_calls,
+    )
+    token: Token[_RunBudget | None] = _ACTIVE_BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _ACTIVE_BUDGET.reset(token)
+
+
+def check_execution_budget() -> None:
+    """Raise when the active run has reached its wall-clock deadline."""
+    budget = _ACTIVE_BUDGET.get()
+    if budget is not None and time.monotonic() >= budget.deadline:
+        raise ExecutionBudgetExceeded("run_timeout", budget.llm_calls)
+
+
+def _reserve_llm_call() -> None:
+    """Count one model request and prevent calls beyond the per-run cap."""
+    budget = _ACTIVE_BUDGET.get()
+    if budget is None:
+        return
+    check_execution_budget()
+    if budget.llm_calls >= budget.max_llm_calls:
+        raise ExecutionBudgetExceeded("llm_call_limit", budget.llm_calls)
+    budget.llm_calls += 1
 
 
 @dataclass
@@ -143,6 +202,7 @@ def generate_json(
 
     # 1. Oracle mode
     if mode == "oracle":
+        _reserve_llm_call()
         text = gold_response if gold_response is not None else "{}"
         return LLMResult(
             text=text,
@@ -161,6 +221,7 @@ def generate_json(
 
     # 2. Replay mode
     if mode == "replay":
+        _reserve_llm_call()
         cassette_path = Path(config.CASSETTE_PATH)
         if cassette_path.exists():
             for line in cassette_path.read_text(encoding="utf-8").splitlines():
@@ -207,20 +268,25 @@ def generate_json(
 
     for attempt, delay in enumerate([0.0] + retry_delays):
         if delay > 0:
+            check_execution_budget()
             sleep(delay)
+        _reserve_llm_call()
         try:
             response = client.models.generate_content(
                 model=model_name,
                 contents=user_content,
                 config=gen_config,
             )
-            break
         except Exception as exc:
+            check_execution_budget()
             last_err = exc
             if not _is_transient_error(exc):
                 raise
             if attempt == len(retry_delays):
                 raise
+        else:
+            check_execution_budget()
+            break
 
     if response is None:
         if last_err is not None:

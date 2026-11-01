@@ -13,7 +13,12 @@ from pydantic import ValidationError
 
 from triage.config import TriageConfig
 from triage.injection import scan_injection
-from triage.llm import format_user_content, generate_json, load_prompt
+from triage.llm import (
+    ExecutionBudgetExceeded,
+    format_user_content,
+    generate_json,
+    load_prompt,
+)
 from triage.models import Assessment, Decision, Extraction, ReviewAction, RuleHit
 from triage.retrieval import (
     compute_corpus_sha256,
@@ -175,6 +180,8 @@ def make_nodes(
                 extraction_failed = False
                 outcome = "ok"
                 break
+            except ExecutionBudgetExceeded:
+                raise
             except (ValidationError, Exception):
                 if attempt < max_attempts - 1:
                     continue
@@ -191,6 +198,7 @@ def make_nodes(
             "outcome": outcome,
             "detail_codes": detail_codes,
             "usage": res.usage if res else {"input_tokens": 0, "output_tokens": 0},
+            "model_name": deps.config.GEMINI_MODEL,
         }
 
         return {
@@ -618,6 +626,7 @@ def make_nodes(
                         "input_tokens": 0,
                         "output_tokens": 0,
                     },
+                    "model_name": deps.config.GEMINI_MODEL,
                 }
             ],
         }

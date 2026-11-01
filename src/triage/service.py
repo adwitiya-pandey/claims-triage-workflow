@@ -1,17 +1,27 @@
 """Triage service orchestrator and idempotency manager per SPEC 13."""
 
+import logging
 import sqlite3
 import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 
 from triage.config import TriageConfig
 from triage.graph import build_graph
-from triage.models import ReviewAction
+from triage.llm import (
+    ExecutionBudgetExceeded,
+    check_execution_budget,
+    execution_budget,
+)
+from triage.models import Decision, ReviewAction
 from triage.nodes import NodeDependencies, make_nodes
+from triage.retrieval import compute_corpus_sha256, load_corpus
 from triage.store import (
     create_review,
     get_all_decisions,
@@ -22,6 +32,7 @@ from triage.store import (
     init_db,
     list_pending_reviews,
     resolve_review,
+    save_decision,
 )
 from triage.tools.base import ClaimsTools
 from triage.tools.fixture_backend import FixtureToolsBackend
@@ -29,6 +40,7 @@ from triage.tools.mcp_backend import McpToolsBackend
 
 _GLOBAL_SERVICE: Any = None
 _GLOBAL_LOCK = threading.Lock()
+telemetry_logger = logging.getLogger("triage.workflow")
 
 
 class TriageService:
@@ -114,12 +126,31 @@ class TriageService:
             # 3. Create version n + 1 and run the graph
             version = get_latest_version(self.triage_conn, claim_id) + 1
             thread_id = f"triage-{claim_id}-v{version}"
-            cfg = {"configurable": {"thread_id": thread_id}}
+            cfg = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": self.config.MAX_GRAPH_STEPS,
+            }
 
-            result = self.graph.invoke(
-                {"claim_id": claim_id, "version": version},
-                config=cfg,
-            )
+            started_at = time.monotonic()
+            with execution_budget(
+                timeout_seconds=self.config.RUN_TIMEOUT_SECONDS,
+                max_llm_calls=self.config.MAX_LLM_CALLS_PER_RUN,
+            ) as budget:
+                try:
+                    result = self.graph.invoke(
+                        {"claim_id": claim_id, "version": version},
+                        config=cfg,
+                    )
+                    check_execution_budget()
+                except ExecutionBudgetExceeded as exc:
+                    return self._budget_fail_safe(
+                        claim_id, version, thread_id, started_at, exc
+                    )
+                except GraphRecursionError:
+                    exc = ExecutionBudgetExceeded("graph_steps", budget.llm_calls)
+                    return self._budget_fail_safe(
+                        claim_id, version, thread_id, started_at, exc
+                    )
 
             # If execution paused at review node
             if "__interrupt__" in result and result["__interrupt__"]:
@@ -143,6 +174,64 @@ class TriageService:
                 "decision": result.get("decision"),
             }
 
+    def _budget_fail_safe(
+        self,
+        claim_id: str,
+        version: int,
+        thread_id: str,
+        started_at: float,
+        exc: ExecutionBudgetExceeded,
+    ) -> dict[str, Any]:
+        """Persist a safe escalation when a configured run budget is exhausted."""
+        now = datetime.now(timezone.utc).isoformat()
+        corpus_hash = compute_corpus_sha256(load_corpus("data/policy/clauses.md"))
+        decision = Decision(
+            claim_id=claim_id,
+            version=version,
+            route_recommended="ESCALATE",
+            route_final="ESCALATE",
+            summary="Execution budget exceeded; manual escalation is required.",
+            facts_digest={},
+            versions={
+                "graph": "1",
+                "rules": "1",
+                "prompt_extract": "extract_v1",
+                "prompt_assess": "assess_v1",
+                "model": self.config.GEMINI_MODEL,
+                "corpus_sha256": corpus_hash,
+            },
+            llm_usage={"input_tokens": 0, "output_tokens": 0, "calls": exc.calls},
+            trail=[
+                {
+                    "node": "budget",
+                    "started_at": now,
+                    "ended_at": now,
+                    "outcome": "exhausted",
+                    "detail_codes": ["budget_exhausted"],
+                }
+            ],
+            created_at=now,
+        ).model_dump(mode="json")
+        save_decision(self.triage_conn, decision)
+        telemetry_logger.warning(
+            "execution_budget_exhausted",
+            extra={
+                "timestamp": now,
+                "run_id": thread_id,
+                "claim_id": claim_id,
+                "node_name": "budget",
+                "model_name": self.config.GEMINI_MODEL,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+                "latency_ms": round((time.monotonic() - started_at) * 1000, 2),
+                "guardrail_triggered": True,
+                "guardrail_flags": ["budget_exhausted"],
+                "final_route": "ESCALATE",
+            },
+        )
+        return {"status": "completed", "decision": decision}
+
     def submit_review(self, thread_id: str, action: dict[str, Any]) -> dict[str, Any]:
         """Resume a paused triage workflow with a human review action (SPEC 12)."""
         with self._lock:
@@ -154,12 +243,50 @@ class TriageService:
 
             # Validate review action
             validated_action = ReviewAction.model_validate(action)
-            cfg = {"configurable": {"thread_id": thread_id}}
-
-            res = self.graph.invoke(
-                Command(resume=validated_action.model_dump(mode="json")),
-                config=cfg,
-            )
+            cfg = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": self.config.MAX_GRAPH_STEPS,
+            }
+            started_at = time.monotonic()
+            with execution_budget(
+                timeout_seconds=self.config.RUN_TIMEOUT_SECONDS,
+                max_llm_calls=self.config.MAX_LLM_CALLS_PER_RUN,
+            ) as budget:
+                try:
+                    res = self.graph.invoke(
+                        Command(resume=validated_action.model_dump(mode="json")),
+                        config=cfg,
+                    )
+                    check_execution_budget()
+                except ExecutionBudgetExceeded as exc:
+                    decision_result = self._budget_fail_safe(
+                        review_row["claim_id"],
+                        review_row["version"],
+                        thread_id,
+                        started_at,
+                        exc,
+                    )
+                    resolve_review(
+                        self.triage_conn,
+                        thread_id=thread_id,
+                        reviewer_id=validated_action.reviewer_id,
+                    )
+                    return decision_result
+                except GraphRecursionError:
+                    exc = ExecutionBudgetExceeded("graph_steps", budget.llm_calls)
+                    decision_result = self._budget_fail_safe(
+                        review_row["claim_id"],
+                        review_row["version"],
+                        thread_id,
+                        started_at,
+                        exc,
+                    )
+                    resolve_review(
+                        self.triage_conn,
+                        thread_id=thread_id,
+                        reviewer_id=validated_action.reviewer_id,
+                    )
+                    return decision_result
 
             resolve_review(
                 self.triage_conn,

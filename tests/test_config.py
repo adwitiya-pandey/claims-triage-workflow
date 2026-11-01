@@ -14,6 +14,9 @@ def test_config_defaults(monkeypatch):
         "CLAIMS_MCP_URL",
         "CLAIMS_MCP_KEY",
         "CLAIMS_MCP_STDIO_CMD",
+        "MAX_GRAPH_STEPS",
+        "RUN_TIMEOUT_SECONDS",
+        "MAX_LLM_CALLS_PER_RUN",
         "RETRIEVER",
         "EMBEDDING_MODEL",
     ]:
@@ -26,8 +29,37 @@ def test_config_defaults(monkeypatch):
     assert cfg.TIMELY_FILING_DAYS == 90
     assert cfg.MIN_EXTRACT_CONFIDENCE == 0.7
     assert cfg.TOP_K == 4
+    assert cfg.MAX_GRAPH_STEPS == 25
+    assert cfg.RUN_TIMEOUT_SECONDS == 60.0
+    assert cfg.MAX_LLM_CALLS_PER_RUN == 4
     assert cfg.RETRIEVER == "bm25"
     assert cfg.EMBEDDING_MODEL == "gemini-embedding-001"
+
+
+def test_execution_budgets_load_from_environment(monkeypatch):
+    monkeypatch.setenv("MAX_GRAPH_STEPS", "7")
+    monkeypatch.setenv("RUN_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("MAX_LLM_CALLS_PER_RUN", "2")
+
+    cfg = TriageConfig.load()
+
+    assert cfg.MAX_GRAPH_STEPS == 7
+    assert cfg.RUN_TIMEOUT_SECONDS == 3.5
+    assert cfg.MAX_LLM_CALLS_PER_RUN == 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("MAX_GRAPH_STEPS", 0),
+        ("RUN_TIMEOUT_SECONDS", 0.0),
+        ("RUN_TIMEOUT_SECONDS", float("inf")),
+        ("MAX_LLM_CALLS_PER_RUN", 0),
+    ],
+)
+def test_execution_budgets_must_be_positive(field, value):
+    with pytest.raises(ValueError, match="must"):
+        TriageConfig(**{field: value}).validate()
 
 
 def test_config_validation_rules(monkeypatch):

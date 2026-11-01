@@ -1,381 +1,394 @@
-# Claims Triage Workflow (Project B)
+# Claims Triage Workflow
 
-[![CI](https://github.com/adwitiya-pandey/claims-triage-workflow-2/actions/workflows/ci.yml/badge.svg)](https://github.com/adwitiya-pandey/claims-triage-workflow-2/actions/workflows/ci.yml)
+[![CI](https://github.com/adwitiya-pandey/claims-triage-workflow/actions/workflows/ci.yml/badge.svg)](https://github.com/adwitiya-pandey/claims-triage-workflow/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![uv](https://img.shields.io/badge/managed%20by-uv-orange.svg)](https://github.com/astral-sh/uv)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![Security: STRIDE Covered](https://img.shields.io/badge/security-STRIDE%20audited-green.svg)](THREAT_MODEL.md)
 
-Production-grade agentic claims triage workflow built with **LangGraph**, **Pydantic v2**, and **MCP (Model Context Protocol)** for a fictional health-insurance Third-Party Administrator (TPA). Given a claim submission, the workflow evaluates policy rules, validates clinical facts, and recommends a route (`FAST_TRACK`, `STANDARD_REVIEW`, or `ESCALATE`), pausing durably for human oversight on all non-fast-track claims while maintaining an immutable audit trail.
+Meridian Health TPA (fictional) needs an auditable first-pass route for synthetic medical claims. This workflow uses Gemini only to extract fields and label policy clauses; deterministic Python rules choose `FAST_TRACK`, `STANDARD_REVIEW`, or `ESCALATE`. Claims that are not fast-tracked pause for human review, and all claim-system data is read through the separate [`claims-mcp-server`](https://github.com/adwitiya-pandey/claims-mcp-server) repo.
 
----
+## Architecture
 
-## 1. System Architecture
-
-The workflow enforces a zero-trust architecture where **the Large Language Model never chooses the route**. LLMs extract entities and label clauses; deterministic Python rules alone determine workflow routing.
-
-```mermaid
-flowchart TD
-    subgraph INTAKE_BOUNDARY ["1. Intake & Ingestion Layer"]
-        START([Claim Submission]) --> intake["intake\n(Sanitize control chars & scan 13 injection regexes)"]
-        intake --> extract["extract\n(Gemini 3.8 Flash via strict Pydantic schema)"]
-    end
-
-    subgraph MCP_BOUNDARY ["2. External MCP Fact Layer (Project A)"]
-        extract --> fetch_facts["fetch_facts\n(Queries claims-mcp-server over HTTP)"]
-        mcp_server[("Project A: Claims MCP Server\n- get_claim\n- list_member_claims\n- get_coverage_rule\n- get_member_ytd_summary\n- get_claim_notes")]
-        fetch_facts <-->|Read-Only HTTP / SSE| mcp_server
-    end
-
-    subgraph POLICY_LAYER ["3. Policy Retrieval & Assessment"]
-        fetch_facts --> retrieve["retrieve\n(BM25 ranking over 30 policy clauses)"]
-        retrieve --> assess["assess\n(Gemini labels clauses + strict citation check)"]
-    end
-
-    subgraph RULE_GATE ["4. Deterministic Guardrail Policy Gate"]
-        assess --> decide{"decide\n(Deterministic pure Python rules R01-R18)"}
-    end
-
-    subgraph HUMAN_GATE ["5. Human Review Oversight"]
-        decide -->|FAST_TRACK| finalize["finalize\n(Idempotent SQLite decision store)"]
-        decide -->|STANDARD_REVIEW or ESCALATE| review["review\n(LangGraph durable interrupt() checkpoint)"]
-        reviewer([Human Reviewer]) -->|CONFIRM or ESCALATE_FURTHER| review
-        review --> finalize
-    end
-
-    subgraph PERSISTENCE ["6. Storage & Telemetry"]
-        finalize --> END([Workflow Complete])
-        finalize -.-> sqlite_db[("SQLite triage.db\nAppend-Only decisions")]
-        finalize -.-> telemetry[("Structured JSON Telemetry\nCost, Latency, Token Usage")]
-    end
-
-    classDef node fill:#f9f9f9,stroke:#333,stroke-width:1.5px;
-    classDef gate fill:#fff3cd,stroke:#856404,stroke-width:2px;
-    classDef mcp fill:#e2e3e5,stroke:#383d41,stroke-width:1.5px;
-    class intake,extract,fetch_facts,retrieve,assess,review,finalize node;
-    class decide gate;
-    class mcp_server,sqlite_db,telemetry mcp;
-```
-
----
-
-## RAG pipeline
-
-The retriever keeps the procedure clause pinned first, then ranks only the other
-policy clauses. `RETRIEVER` defaults to `bm25`; `dense` and `hybrid` are opt-in.
-Hybrid uses Reciprocal Rank Fusion with `k=60`. The assessment node still validates
-every citation against retrieved chunk IDs and verbatim clause text.
+The workflow is linear except for the deterministic route gate: only `FAST_TRACK` bypasses `review`. The MCP server is a read-only boundary, the graph uses a SQLite checkpointer, policy clauses are ranked with the in-repo BM25 retriever, and every node emits allowlisted JSON telemetry.
 
 ```mermaid
 flowchart LR
-    query["Query: extracted procedure description + system procedure code"]
-    query --> sanitize["Sanitize before embedding"]
+    subgraph workflow["LangGraph workflow"]
+        START([START]) --> intake[intake]
+        intake --> extract[extract]
+        extract --> fetch_facts[fetch_facts]
+        fetch_facts --> retrieve[retrieve]
+        retrieve --> assess[assess]
+        assess --> decide{decide: deterministic rules}
+        decide -->|route == FAST_TRACK| finalize[finalize]
+        decide -->|route != FAST_TRACK| review[review: interrupt]
+        review --> finalize
+        finalize --> END([END])
+    end
+
+    fetch_facts <-->|read-only tools| mcp[(claims-mcp-server)]
+    retrieve -.-> bm25[BM25 policy retriever]
+    review -. pause and resume .-> checkpoint[(SQLite graph checkpointer)]
+    finalize -. append-only record .-> decisions[(SQLite decision store)]
+    workflow -. one flat JSON event per node .-> telemetry[(JSON telemetry sink: stdout)]
+```
+
+The graph edges are implemented in [`build_graph`](src/triage/graph.py); the conditional edge sends exactly `FAST_TRACK` to `finalize`, and every other route to `review`.
+
+## Offline by default
+
+The checked-in [`.env.example`](.env.example) sets `LLM_MODE=replay` and `CLAIMS_TOOLS_BACKEND=fixture`. Replay uses the committed response cassette and fixture data, so offline checks and the API need neither a Gemini key nor a running MCP server. For live Gemini calls, set `LLM_MODE=live` and provide `GEMINI_API_KEY`; for claim data from the `claims-mcp-server` repo, set `CLAIMS_TOOLS_BACKEND=mcp`, `CLAIMS_MCP_URL`, and `CLAIMS_MCP_KEY`. Keep credentials in the ignored local `.env`, never in source control.
+
+## RAG pipeline
+
+The matching procedure clause is always returned first. `RETRIEVER=bm25` remains
+the default; `dense` and `hybrid` are opt-in. Dense ranking uses normalized
+Gemini embeddings and exact NumPy cosine similarity. Hybrid combines BM25 and
+dense rankings with Reciprocal Rank Fusion (`k=60`), with deterministic
+`chunk_id` tie-breaking. Assessment still validates citation IDs and quoted
+text against retrieved clauses.
+
+```mermaid
+flowchart LR
+    query["Build query from procedure facts"]
+    query --> sanitize["Sanitize query"]
     query --> bm25["BM25 rank"]
-    sanitize --> dense["Gemini retrieval-query embedding"]
-    dense --> dense_rank["Exact cosine rank over non-procedure clauses"]
-    bm25 --> select["Select by RETRIEVER mode"]
-    dense_rank --> select
-    select --> rrf["RRF when mode is hybrid"]
-    rrf --> pin["Prepend matching procedure clause"]
-    select --> pin
+    sanitize --> dense["Gemini query embedding"]
+    dense --> cosine["Exact cosine rank"]
+    bm25 --> mode["Select RETRIEVER mode"]
+    cosine --> mode
+    mode --> rrf["RRF when hybrid"]
+    rrf --> pin["Pin procedure clause first"]
+    mode --> pin
     pin --> assess["Assess retrieved clauses"]
-    assess --> cite["Validate citation IDs and verbatim quotes"]
-    cite --> review["Store trace in state; include it in review packet"]
+    assess --> cite["Validate citation IDs and quotes"]
+    cite --> review["Include retrieval trace in review packet"]
 ```
 
-### Retrieval experiment
+The retrieval evaluator reports BM25, dense, and hybrid quality separately.
+Committed embedding cache/index artifacts support offline evaluation; cache
+misses in replay mode fail rather than contacting Gemini. Query text is
+sanitized before embedding, and claim-derived text is not persisted in the
+gold set, embedding cache, retrieval trace, or logs. See
+[`evals/reports/retrieval.md`](evals/reports/retrieval.md) for the recorded
+comparison and [`scripts/build_index.py`](scripts/build_index.py) for rebuilding
+the exact NumPy index. Live embedding calls require an explicitly configured
+Gemini key and owner approval.
 
-The gold file records only procedure-code query handles so claim-derived text is not
-duplicated on disk. The evaluator combines the corresponding synthetic gold
-procedure description in memory and does not print or persist that query. The
-retrieval trace contains chunk IDs and scores only.
+Offline evaluation run on 2026-11-01 using the committed embedding cache/index:
 
-| Mode | Recall@1 | Recall@3 | Recall@4 | MRR | nDCG@4 | Cases | Status |
-|---|---:|---:|---:|---:|---:|---:|---|
-| BM25 | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured 2026-11-01 |
-| Dense (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured 2026-11-01 |
-| Hybrid (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured 2026-11-01 |
+| Mode | Recall@1 | Recall@3 | Recall@4 | MRR | nDCG@4 | Cases |
+|---|---:|---:|---:|---:|---:|---:|
+| BM25 | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 |
+| Dense (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 |
+| Hybrid (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 |
 
-BM25 remains the default because the measured dense and hybrid retrieval quality is
-functionally identical on this 30-clause synthetic corpus. The exact NumPy dense
-index is available for the experiment, but there is no evidence of improvement at
-this corpus size. Retrieval evaluation uses [retrieval_gold.jsonl](evals/retrieval_gold.jsonl)
-and [retrieval_eval.py](evals/retrieval_eval.py).
+BM25 remains the default: dense and hybrid matched its retrieval metrics in
+this offline comparison, and no new live Gemini calls or hybrid end-to-end
+cassette recording were performed.
 
-The measured retrieval command was `uv run python -m evals.retrieval_eval --mode all --allow-live`;
-its output was:
+## Quickstart
 
-```text
-bm25    Recall@1=0.9302 Recall@3=1.0000 Recall@4=1.0000 MRR=1.0000 nDCG@4=1.0000 cases=43
-dense   Recall@1=0.9302 Recall@3=1.0000 Recall@4=1.0000 MRR=1.0000 nDCG@4=1.0000 cases=43
-hybrid  Recall@1=0.9302 Recall@3=1.0000 Recall@4=1.0000 MRR=1.0000 nDCG@4=1.0000 cases=43
-```
+Run these commands from the repository root.
 
-### Configuration and limits
-
-- `RETRIEVER`: `bm25` (default), `dense`, or `hybrid`.
-- `EMBEDDING_MODEL`: defaults to `gemini-embedding-001`. The current official guide
-  identifies `gemini-embedding-2` as latest, but this implementation follows the
-  requested `RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY` task types supported by
-  `gemini-embedding-001`; see [sdk_notes.md](docs/sdk_notes.md).
-- The dense index and hashed embedding cache are generated under
-  `data/embeddings/`. [build_index.py](scripts/build_index.py) rebuilds the exact
-  NumPy index after document vectors are available. An uncached Gemini request
-  requires `--allow-live` and an explicitly configured key; no live build has been
-  run in this session.
-- The corpus is tiny and synthetic. Exact NumPy cosine search is sufficient for
-  this experiment; larger corpora need a separately evaluated ANN/vector service.
-- Gemini free-tier terms may allow prompts to be used to improve products. Only
-  synthetic claims may be sent; this project must never use real claimant data.
-- Embedding cache keys are hashes and values are vectors; claim-derived query text
-  is never cached, logged, or included in retrieval traces.
-
----
-
-## 2. Repository Structure
-
-```
-claims-triage-workflow-2/
-├── .github/
-│   └── workflows/
-│       └── ci.yml               # Automated CI: ruff lint, format, pytest, oracle & replay eval
-├── data/
-│   ├── cases/                   # 43 synthetic scenario test cases (JSON)
-│   │   ├── case-01.json         # Clean fast-track scenario
-│   │   ├── case-14.json         # Coverage rule unknown (escalate)
-│   │   ├── case-20.json         # High dollar threshold (escalate)
-│   │   ├── case-34.json         # Prompt injection in submission text
-│   │   ├── case-38.json         # Adversarial prompt injection in clinical notes
-│   │   └── ...                  # 43 total scenarios covering all categories
-│   ├── cassettes/               # Deterministic LLM response cassettes
-│   │   ├── cassette.jsonl       # 85 canonical recorded requests/responses
-│   │   └── test_cassette.jsonl  # Fixture for unit testing cassette replay
-│   ├── embeddings/              # Generated hashed cache, index.npz, and manifest
-│   ├── policy/                  # Policy corpus and requirements
-│   │   ├── clauses.md           # 30 health insurance policy clauses
-│   │   └── required_documents.json # Document requirements per procedure code
-│   └── schema_from_project_a.sql# Schema definition copied from Project A
-├── docs/
-│   ├── EXPLAIN-PLAIN-ENGLISH.md # Plain-English explanation of the LangGraph workflow
-│   ├── decisions.md             # Architectural Decision Records (ADRs)
-│   ├── eval_findings.md         # Detailed oracle vs replay evaluation findings report
-│   ├── running_with_project_a.md# Integration runbook for running adjacent to Project A
-│   └── sdk_notes.md             # Framework facts verified against installed packages
-├── evals/
-│   ├── gates.json               # CI pass/fail threshold criteria for M1 through M8
-│   ├── run_eval.py              # Quantitative evaluation engine (oracle / replay / live)
-│   ├── retrieval_eval.py        # Recall, MRR, and nDCG retrieval evaluation
-│   ├── retrieval_gold.jsonl     # Synthetic retrieval relevance labels
-│   └── reports/                 # Eval summaries, including retrieval.md
-├── prompts/
-│   ├── assess_v1.txt            # Versioned prompt template for policy assessment
-│   └── extract_v1.txt           # Versioned prompt template for entity extraction
-├── scripts/
-│   ├── build_scenario_db.py     # Compiles data/cases/*.json into data/scenario.db
-│   ├── build_index.py           # Builds the corpus-hash-bound NumPy embedding index
-│   └── record_cassettes.py      # Records Gemini LLM calls into data/cassettes/cassette.jsonl
-├── src/
-│   └── triage/
-│       ├── __init__.py          # Package root
-│       ├── __main__.py          # CLI entry point for uvicorn server
-│       ├── api.py               # FastAPI REST endpoints with Bearer auth & error masking
-│       ├── config.py            # Pydantic/dataclass configuration and secret handling
-│       ├── embeddings.py        # Gemini, deterministic hash, and hashed-cache embedders
-│       ├── graph.py             # LangGraph StateGraph topology, routing, and telemetry
-│       ├── injection.py         # 13 regex heuristics + zero-width character scanner
-│       ├── llm.py               # Canonical JSON hashing, Gemini client, cassette replay
-│       ├── logging_setup.py     # Structured JSON log formatter (S7 PHI/PII protection)
-│       ├── models.py            # Strict Pydantic v2 schemas (extra="forbid")
-│       ├── nodes.py             # 8 workflow node implementations (intake to finalize)
-│       ├── retrieval.py         # BM25, dense, hybrid rankings, and citation grounding
-│       ├── rules.py             # Deterministic pure Python routing rule engine
-│       ├── sanitize.py          # Control character stripping and length limiting
-│       ├── service.py           # TriageService orchestrator, locking, and idempotency
-│       ├── state.py             # LangGraph TriageState schema (plain JSON-serializable)
-│       ├── store.py             # Append-only SQLite store with SHA-256 state hashing
-│       ├── vectorstore.py       # Exact NumPy cosine search and index manifest
-│       └── tools/
-│           ├── base.py          # ClaimsTools typing protocol & ToolError definitions
-│           ├── fixture_backend.py # In-memory / JSON fixture backend for offline tests
-│           └── mcp_backend.py   # Streamable HTTP MCP client with backoff retry
-├── tests/
-│   ├── test_api.py              # FastAPI endpoint auth, routes, and error handling
-│   ├── test_contract_mcp.py     # Live Project A MCP integration contract tests
-│   ├── test_eval_gates.py       # Automated eval gate checks during pytest
-│   ├── test_graph.py            # LangGraph topology, pause/resume, and restart safety
-│   ├── test_injection.py        # 13 regex injection test tables
-│   ├── test_llm.py              # Canonical request hashing and cassette replay tests
-│   ├── test_logging_telemetry.py# Structured JSON telemetry and token cost verification
-│   ├── test_models.py           # Pydantic model validation and ID regex tests
-│   ├── test_nodes_assess.py     # Policy assessment node and verbatim quote checks
-│   ├── test_nodes_extract.py    # Entity extraction and retry behavior tests
-│   ├── test_nodes_fetch_facts.py# MCP error code mapping and note scanning tests
-│   ├── test_retrieval.py        # BM25 determinism and tie-breaking tests
-│   ├── test_dense_retrieval.py  # Dense/hybrid ranking and fallback tests
-│   ├── test_embeddings.py       # Offline embedding and cache tests
-│   ├── test_readme_tree.py      # Repository tree documentation stays current
-│   ├── test_retrieval_eval.py   # Retrieval metric tests
-│   ├── test_retrieval_node.py   # Retrieval node trace and telemetry tests
-│   ├── test_rules.py            # All 18 deterministic rule scenarios
-│   ├── test_sanitize.py         # Text sanitization and character stripping tests
-│   ├── test_security.py         # S1-S14 security requirements verification
-│   ├── test_store_service.py    # Append-only SQLite, versioning, and idempotency tests
-│   └── test_vectorstore.py      # Exact index, persistence, and corpus mismatch tests
-├── AGENTS.md                    # Autonomous workflow contract and developer constraints
-├── PROGRESS.md                  # Task-by-task execution and completion status
-├── pyproject.toml               # Project dependencies, build config, and ruff settings
-├── SPEC.md                      # Complete engineering specification and data contracts
-├── TASKS.md                     # Step-by-step implementation tasks (T0 through T19)
-└── THREAT_MODEL.md              # Full STRIDE security analysis and trust boundary audit
-```
-
----
-
-## 3. Core Invariants & Security Guarantees
-
-1. **The LLM Never Chooses the Route:** Only `rules.py` chooses a route as a pure mathematical function of verified facts and sanitized assessments. LLM summaries and rationales are never fed into routing logic.
-2. **Deterministic Citation Verification:** In `assess_node`, every cited policy clause must exist in retrieved chunks, and quotes supporting or restricting coverage must be at least 20 characters long and match the source text verbatim. Hallucinated quotes are dropped before rule evaluation.
-3. **Indirect Prompt-Injection Defense:** Clinical notes fetched from MCP and patient submission text are scanned across 13 adversarial patterns and sanitized for zero-width unicode characters before prompt injection. Any flagged claim triggers immediate escalation to human review.
-4. **Append-Only Decision Store:** The SQLite `decisions` table allows `INSERT` operations only. `UPDATE` and `DELETE` operations are strictly forbidden to ensure immutable regulatory audit trails.
-5. **Durable Human Oversight:** LangGraph `interrupt()` pauses all non-fast-track claims durably in SQLite (`checkpoint.db`). Claims resume cleanly across process restarts using `Command(resume=...)` without side effects.
-6. **Structured Telemetry & PHI Protection:** Logs strictly adhere to `ALLOWED_LOG_KEYS`. Raw claim text, clinical notes, and model prompts are barred from log output.
-
----
-
-## 4. Evaluation Results & Honest Limits
-
-Quantitative evaluation runs across **43 labeled synthetic cases** using `evals/run_eval.py` against strict CI gates in `evals/gates.json`:
-
-| Metric ID | Description | CI Gate Threshold | Oracle Mode | Replay Mode | Status |
-| :--- | :--- | :--- | :---: | :---: | :---: |
-| **M1** | **False Fast-Track Rate** | $\le 0.0\%$ (Strict Zero) | **0.00%** | **0.00%** | **PASS** |
-| **M2** | Route Accuracy | $\ge 95.0\%$ | **100.00%** | **100.00%** | **PASS** |
-| **M3** | Over-Escalation Rate | Informational ($\le 25.0\%$) | **0.00%** | **0.00%** | **INFO** |
-| **M4** | Injection Containment | $= 100.0\%$ (Strict) | **100.00%** | **100.00%** | **PASS** |
-| **M5** | Citation Validity | $\ge 95.0\%$ | **100.00%** | **100.00%** | **PASS** |
-| **M6** | Rule-ID Match | $\ge 95.0\%$ | **100.00%** | **100.00%** | **PASS** |
-| **M7** | Extraction Field Accuracy | Informational | **100.00%** | **100.00%** | **INFO** |
-| **M8** | Reason Coverage | $= 100.0\%$ (Strict) | **100.00%** | **100.00%** | **PASS** |
-
-### Honest Evaluation Limits (Disclosures):
-- **Oracle Mode:** Feeds gold extractions and assessments directly into the rule engine and graph topology. It proves that rules, state reducers, and gates function with mathematical precision, but does not evaluate model capability. $M1 = 0.0\%$ is expected by construction.
-- **Replay Mode:** Evaluates recorded Gemini LLM output captured in `data/cassettes/cassette.jsonl`. It confirms real LLM parsing and citation extraction without external network dependencies.
-- **Synthetic Cases:** The 43 scenarios prove performance against defined edge cases and adversarial attacks, but do not represent a production clinical distribution.
-- **Consistency vs. Ground Truth:** Expected labels are derived from the rule specification; evaluation measures compliance against the specification rather than independent clinical consensus.
-
----
-
-## 5. Quickstart & Operational Runbook
-
-### Prerequisites
-- Linux / WSL2 Ubuntu with Python 3.12+ installed.
-- `uv` package manager (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
-
-### Installation
 ```bash
-# Clone repository
-git clone https://github.com/adwitiya-pandey/claims-triage-workflow-2.git
-cd claims-triage-workflow-2
+cp .env.example .env
+```
 
-# Install dependencies into virtual environment
+Expected output: no output when the copy succeeds.
+
+```bash
 uv sync
 ```
 
-### Running Offline Quality Checks
-```bash
-# 1. Lint and code formatting
-uv run ruff check .
-uv run ruff format --check .
+Expected output (trimmed from this session):
 
-# 2. Run the 100% offline unit test suite (141 tests)
-uv run pytest -q -m "not integration"
-
-# 3. Run deterministic replay evaluation against CI gates
-uv run python -m evals.run_eval --mode replay
-
-# 4. Run oracle baseline evaluation
-uv run python -m evals.run_eval --mode oracle
+```text
+Resolved 74 packages in 3ms
+Checked 71 packages in 2ms
 ```
 
-### Running the API Server
 ```bash
-# Copy environment configuration
-cp .env.example .env
-
-# Start FastAPI server on port 8800
-TRIAGE_API_KEY="sec_local_dev_key_123" uv run python -m triage --port 8800
+uv run ruff check . && uv run ruff format --check . && uv run pytest -q -m "not integration" && uv run python -m evals.run_eval --mode replay
 ```
 
-### Interacting with the API
+Expected output (trimmed from this session):
+
+```text
+All checks passed!
+61 files already formatted
+152 passed, 1 deselected, 2 warnings in 19.98s
+Claims Triage Evaluation Summary (Mode: replay)
+M1_false_fast_track_rate         : 0.0000 [PASS]
+M2_route_accuracy                : 1.0000 [PASS]
+M3_over_escalation_rate          : 0.0000 [INFO]
+M4_injection_containment         : 1.0000 [PASS]
+M5_citation_validity             : 1.0000 [PASS]
+M6_rule_id_match                 : 1.0000 [PASS]
+M7_extraction_field_accuracy     : 1.0000 [INFO]
+M8_reason_coverage               : 1.0000 [PASS]
+ALL CI GATES PASSED
+```
+
+### Start the API
+
+The server reads its port from `API_PORT`; command-line `--port` is not supported.
+
 ```bash
-# Health check
+API_PORT=8800 uv run python -m triage
+```
+
+Expected output (trimmed from the API run in this session):
+
+```text
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8800 (Press CTRL+C to quit)
+```
+
+#### PowerShell equivalents
+
+The PowerShell executable was not available in the Linux validation environment, so these equivalents are provided but were not executed here.
+
+```powershell
+Copy-Item .env.example .env
+$env:API_PORT = "8800"
+uv run python -m triage
+```
+
+Expected output is not verified: PowerShell is not installed in the Linux validation environment. `Copy-Item` should be silent on success; Uvicorn should report `http://127.0.0.1:8800`.
+
+### Call the API
+
+The API uses `X-API-Key` (the dummy local value below comes from `.env.example`). `/health` is public. These calls demonstrate a fast track, a standard-review pause, an escalation pause, an injection escalation, the pending-review list, and a review resume.
+
+```bash
 curl -s http://127.0.0.1:8800/health
-
-# Trigger triage for a claim
 curl -s -X POST http://127.0.0.1:8800/triage \
-  -H "Authorization: Bearer sec_local_dev_key_123" \
+  -H "X-API-Key: dummy_triage_api_key" \
   -H "Content-Type: application/json" \
   -d '{"claim_id": "CLM70000001"}'
-
-# List claims awaiting human review
-curl -s http://127.0.0.1:8800/reviews/pending \
-  -H "Authorization: Bearer sec_local_dev_key_123"
-
-# Submit human review decision (durable LangGraph resume)
-curl -s -X POST http://127.0.0.1:8800/reviews/<THREAD_ID> \
-  -H "Authorization: Bearer sec_local_dev_key_123" \
+curl -s -X POST http://127.0.0.1:8800/triage \
+  -H "X-API-Key: dummy_triage_api_key" \
   -H "Content-Type: application/json" \
-  -d '{
-    "reviewer_id": "rev10001",
-    "action": "CONFIRM",
-    "reason": "Verified clinical records and confirmed route."
-  }'
+  -d '{"claim_id": "CLM70000009"}'
+curl -s -X POST http://127.0.0.1:8800/triage \
+  -H "X-API-Key: dummy_triage_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"claim_id": "CLM70000020"}'
+curl -s -X POST http://127.0.0.1:8800/triage \
+  -H "X-API-Key: dummy_triage_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"claim_id": "CLM70000034"}'
+curl -s http://127.0.0.1:8800/reviews/pending \
+  -H "X-API-Key: dummy_triage_api_key"
+curl -s -X POST http://127.0.0.1:8800/reviews/triage-CLM70000009-v1 \
+  -H "X-API-Key: dummy_triage_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"reviewer_id":"rev10001","action":"CONFIRM","reason":"Confirmed standard review after checking the synthetic claim facts."}'
 ```
 
-### Running with Project A (MCP Server Integration)
-To verify contract parity against live Project A (`claims-mcp-server`):
-```bash
-# 1. Build the scenario database
-uv run python scripts/build_scenario_db.py --out data/scenario.db
+Expected output (trimmed from the API run in this session):
 
-# 2. In an adjacent terminal, launch Project A over HTTP
-cd ~/projects/claims-mcp-server
-CLAIMS_DB_PATH=~/projects/claims-triage-workflow-2/data/scenario.db \
-CLAIMS_RATE_LIMIT_PER_MIN=10000 \
-uv run python -m claims_mcp --transport http --port 8000
-
-# 3. Return to Project B and run integration contract test
-cd ~/projects/claims-triage-workflow-2
-CLAIMS_MCP_URL="http://127.0.0.1:8000/mcp" \
-CLAIMS_MCP_KEY="<PLAINTEXT_KEY>" \
-uv run pytest tests/test_contract_mcp.py -m integration -v
+```text
+{"status":"ok","version":"0.1.0"}
+{"status":"completed","decision":{"route_recommended":"FAST_TRACK","route_final":"FAST_TRACK",...}}
+{"status":"awaiting_review","thread_id":"triage-CLM70000009-v1","packet":{"recommended_route":"STANDARD_REVIEW",...}}
+{"status":"awaiting_review","thread_id":"triage-CLM70000020-v1","packet":{"recommended_route":"ESCALATE",...}}
+{"status":"awaiting_review","thread_id":"triage-CLM70000034-v1","packet":{"recommended_route":"ESCALATE",...}}
+[{...,"claim_id":"CLM70000009",...},{...}]
+{"status":"completed","decision":{"route_recommended":"STANDARD_REVIEW","route_final":"STANDARD_REVIEW",...}}
 ```
 
----
+## 2. Repository Structure
 
-## 6. Telemetry & Cost Telemetry Specification
+Paths in this tree are tracked by Git; their one-line descriptions identify the file's purpose.
 
-Every workflow node transition in `graph.py` logs structured JSON containing execution latency, token expenditure, and cost estimates based on Google Gemini pricing ($0.075 / 1M input tokens, $0.30 / 1M output tokens):
+```text
+claims-triage-workflow/
+├── .env.example                 # Offline-friendly configuration template
+├── .gitattributes               # Repository text and line-ending rules
+├── .github/workflows/ci.yml     # Lint, test, and evaluation CI
+├── .gitignore                   # Ignore secrets and local runtime data
+├── .pre-commit-config.yaml      # Optional local quality hooks
+├── .python-version              # Project Python version
+├── .vscode/settings.json        # Workspace editor settings
+├── AGENTS.md                    # Repository-specific engineering constraints
+├── LICENSE                      # Project license
+├── README.md                    # Project guide and operational quickstart
+├── SPEC.md                      # Product, safety, and data contract
+├── TASKS.md                     # Original project task roadmap
+├── THREAT_MODEL.md              # Security threats and mitigations
+├── data/
+│   ├── cases/
+│   │   ├── case-01.json         # Synthetic clean case
+│   │   ├── case-02.json         # Synthetic clean case
+│   │   ├── case-03.json         # Synthetic clean case
+│   │   ├── case-04.json         # Synthetic clean case
+│   │   ├── case-05.json         # Synthetic clean case
+│   │   ├── case-06.json         # Synthetic clean case
+│   │   ├── case-07.json         # Synthetic clean case
+│   │   ├── case-08.json         # Synthetic clean case
+│   │   ├── case-09.json         # Synthetic preauthorisation case
+│   │   ├── case-10.json         # Synthetic preauthorisation case
+│   │   ├── case-11.json         # Synthetic preauthorisation case
+│   │   ├── case-12.json         # Synthetic coverage case
+│   │   ├── case-13.json         # Synthetic coverage case
+│   │   ├── case-14.json         # Synthetic unknown-coverage case
+│   │   ├── case-15.json         # Synthetic unknown-coverage case
+│   │   ├── case-16.json         # Synthetic network case
+│   │   ├── case-17.json         # Synthetic network case
+│   │   ├── case-18.json         # Synthetic max-allowed case
+│   │   ├── case-19.json         # Synthetic max-allowed case
+│   │   ├── case-20.json         # Synthetic high-amount case
+│   │   ├── case-21.json         # Synthetic high-amount case
+│   │   ├── case-22.json         # Synthetic duplicate case
+│   │   ├── case-23.json         # Synthetic duplicate case
+│   │   ├── case-24.json         # Synthetic duplicate case
+│   │   ├── case-25.json         # Synthetic timely-filing case
+│   │   ├── case-26.json         # Synthetic timely-filing case
+│   │   ├── case-27.json         # Synthetic annual-limit case
+│   │   ├── case-28.json         # Synthetic annual-limit case
+│   │   ├── case-29.json         # Synthetic required-document case
+│   │   ├── case-30.json         # Synthetic required-document case
+│   │   ├── case-31.json         # Synthetic extraction discrepancy case
+│   │   ├── case-32.json         # Synthetic extraction discrepancy case
+│   │   ├── case-33.json         # Synthetic extraction discrepancy case
+│   │   ├── case-34.json         # Synthetic submission injection case
+│   │   ├── case-35.json         # Synthetic submission injection case
+│   │   ├── case-36.json         # Synthetic submission injection case
+│   │   ├── case-37.json         # Synthetic claim-note injection case
+│   │   ├── case-38.json         # Synthetic claim-note injection case
+│   │   ├── case-39.json         # Synthetic hidden-character case
+│   │   ├── case-40.json         # Synthetic terminal-status case
+│   │   ├── case-41.json         # Synthetic unreadable-submission case
+│   │   ├── case-42.json         # Synthetic unreadable-submission case
+│   │   └── case-43.json         # Synthetic missing-claim case
+│   ├── cassettes/
+│   │   ├── cassette.jsonl       # Replay responses for model calls
+│   │   └── test_cassette.jsonl  # Small cassette used by unit tests
+│   ├── embeddings/
+│   │   ├── cache.jsonl          # Hashed synthetic embedding cache
+│   │   ├── index.npz            # Exact NumPy cosine index
+│   │   └── manifest.json        # Embedding model and corpus version
+│   ├── policy/
+│   │   └── clauses.md           # Synthetic policy corpus for BM25 retrieval
+│   ├── rules/
+│   │   └── required_documents.json # Procedure document requirements
+│   └── schema_from_project_a.sql # Scenario DB schema provenance
+├── docs/
+│   ├── EXPLAIN-PLAIN-ENGLISH.md # Workflow and checkpointing explanation
+│   ├── decisions.md             # Architecture decision records
+│   ├── eval_findings.md         # Oracle and replay evaluation notes
+│   ├── running_with_project_a.md # MCP integration runbook
+│   └── sdk_notes.md             # Verified SDK and framework behavior
+├── evals/
+│   ├── __init__.py              # Evaluation package
+│   ├── gates.json               # Evaluation metric thresholds
+│   ├── reports/
+│   │   ├── latest.json          # Latest measured evaluation results
+│   │   ├── latest.md            # Human-readable evaluation report
+│   │   └── retrieval.md         # Offline retrieval comparison
+│   ├── retrieval_eval.py        # BM25, dense, and hybrid retrieval metrics
+│   ├── retrieval_gold.jsonl     # Synthetic retrieval labels
+│   └── run_eval.py              # Oracle, replay, and live evaluation runner
+├── prompts/
+│   ├── assess_v1.md             # Versioned policy-assessment prompt
+│   └── extract_v1.md             # Versioned claim-extraction prompt
+├── scripts/
+│   ├── build_index.py           # Build the local dense retrieval index
+│   ├── build_scenario_db.py     # Build synthetic claims scenario database
+│   └── record_cassettes.py      # Record model responses with explicit opt-in
+├── src/triage/
+│   ├── __init__.py              # Package initializer
+│   ├── __main__.py              # Uvicorn entry point
+│   ├── api.py                   # FastAPI endpoints and API-key enforcement
+│   ├── config.py                # Environment configuration and validation
+│   ├── embeddings.py            # Gemini, hash, and cached embedders
+│   ├── graph.py                 # LangGraph topology and node telemetry
+│   ├── injection.py             # Injection-pattern scanner
+│   ├── llm.py                   # Gemini adapter, replay, and run budgets
+│   ├── logging_setup.py         # Allowlisted JSON log formatter
+│   ├── models.py                # Strict Pydantic data contracts
+│   ├── nodes.py                 # Workflow node implementations
+│   ├── retrieval.py             # BM25, dense, and hybrid policy retrieval
+│   ├── rules.py                 # Deterministic route rules
+│   ├── sanitize.py              # Untrusted-text sanitization
+│   ├── service.py               # Run orchestration and persistence integration
+│   ├── state.py                 # JSON-serializable LangGraph state
+│   ├── store.py                 # Append-only decisions and review records
+│   ├── vectorstore.py           # Exact NumPy vector index
+│   └── tools/
+│       ├── __init__.py          # Tools package initializer
+│       ├── base.py              # Read-only claims tools protocol
+│       ├── fixture_backend.py   # Offline fixture tools
+│       └── mcp_backend.py       # MCP client for claims-mcp-server
+├── tests/
+│   ├── test_api.py              # API auth, routes, and response behavior
+│   ├── test_cases.py            # Synthetic case and fixture validation
+│   ├── test_config.py           # Configuration defaults and validation
+│   ├── test_contract_mcp.py     # Optional live MCP contract checks
+│   ├── test_eval_gates.py       # Evaluation gate regression checks
+│   ├── test_execution_budget.py # Recursion, time, and LLM-call budgets
+│   ├── test_dense_retrieval.py  # Dense/hybrid ranking and fallback behavior
+│   ├── test_embeddings.py       # Embedding normalization and cache behavior
+│   ├── test_graph.py            # Graph routing, review, and checkpointing
+│   ├── test_injection.py        # Injection scanner cases
+│   ├── test_llm.py              # Gemini adapter and cassette behavior
+│   ├── test_logging.py          # Safe structured logging
+│   ├── test_logging_runtime.py  # API runtime telemetry regression checks
+│   ├── test_logging_telemetry.py # Node telemetry and privacy checks
+│   ├── test_mcp_backend.py      # MCP client behavior with fakes
+│   ├── test_models.py           # Strict model validation
+│   ├── test_nodes_a.py          # Intake, extraction, and fact nodes
+│   ├── test_nodes_b.py          # Retrieval, assessment, review, finalize
+│   ├── test_readme_tree.py      # README tree path existence
+│   ├── test_retrieval_eval.py   # Retrieval metric calculations
+│   ├── test_retrieval.py        # BM25 correctness and determinism
+│   ├── test_retrieval_node.py   # Workflow retrieval and trace behavior
+│   ├── test_rules.py             # Deterministic route rules
+│   ├── test_sanitize.py         # Untrusted-text sanitization
+│   ├── test_smoke.py            # Package import smoke test
+│   ├── test_store_service.py    # Persistence and idempotency
+│   └── test_vectorstore.py      # Index persistence and corpus validation
+├── pyproject.toml               # Package and tooling configuration
+└── uv.lock                      # Reproducible dependency lockfile
+```
+
+## Logging and guardrails
+
+The workflow uses four execution/safety layers:
+
+1. **Input and injection scan:** submission and note text are sanitized and scanned before any LLM call; an injection flag drives the deterministic route to escalation.
+2. **Deterministic rules gate:** only `rules.py` chooses the route. Gemini output cannot independently select a route.
+3. **Citation validation:** assessment citations must refer to retrieved clauses, and supporting/restricting quotes must match the source text.
+4. **Execution budget:** graph recursion is capped by `MAX_GRAPH_STEPS` (25 by default), each run has a `RUN_TIMEOUT_SECONDS` deadline (60 by default), and model requests are capped by `MAX_LLM_CALLS_PER_RUN` (4 by default). A breach returns a persisted `ESCALATE` decision and emits `budget_exhausted`.
+
+Node telemetry is a single flat JSON object per event. Claim and note text, prompts, and model output are not fields in the log event.
+
+| Field | Meaning |
+|---|---|
+| `timestamp` | UTC event time |
+| `run_id` | Graph thread identifier |
+| `claim_id` | Synthetic claim identifier |
+| `node_name` | Node that emitted the event |
+| `model_name` | Configured model for LLM nodes; `none` otherwise |
+| `input_tokens` / `output_tokens` | Usage reported for that node |
+| `cost_usd` | Estimated model cost for the node |
+| `latency_ms` | Node duration in milliseconds |
+| `guardrail_triggered` | Whether any guardrail flag was raised |
+| `guardrail_flags` | Short codes such as `injection_detected`, `policy_gate`, or `budget_exhausted` |
+| `final_route` | Current or final route when available |
+| `retriever_mode` / `retrieval_ms` | Retrieval mode and duration on the retrieve node |
+
+Real sample line captured during the API telemetry test in this session:
 
 ```json
-{
-  "timestamp": "2026-10-23T15:20:43.856007+00:00",
-  "run_id": "thread-test-telemetry",
-  "claim_id": "CLM70000001",
-  "node_name": "assess",
-  "latency_ms": 2.87,
-  "token_usage": {
-    "input_tokens": 340,
-    "output_tokens": 110
-  },
-  "cost_usd": 0.000059,
-  "guardrail_triggered": false,
-  "final_route": null
-}
+{"timestamp": "2026-11-01T05:39:37.434202+00:00", "level": "INFO", "logger": "triage.workflow", "cost_usd": 0.0, "input_tokens": 0, "latency_ms": 0.18, "model_name": "none", "claim_id": "CLM70000001", "final_route": "FAST_TRACK", "guardrail_triggered": false, "output_tokens": 0, "guardrail_flags": [], "run_id": "triage-CLM70000001-v1", "node_name": "decide"}
 ```
 
----
+## Evaluation and limitations
 
-## 7. Security & Threat Modeling
+The replay evaluation run in this session passed all configured gates: false fast-track rate `0.0000`, route accuracy `1.0000`, injection containment `1.0000`, citation validity `1.0000`, rule-ID match `1.0000`, and reason coverage `1.0000`. Oracle mode feeds the gold extraction and assessment into the graph; it checks rules, graph behavior, and gates, not Gemini quality. Replay mode exercises recorded Gemini output without network access. The expected labels derive from the same rule specification, so these evaluations measure consistency with the contract rather than independent clinical ground truth.
 
-For complete details on threat classification, trust boundary auditing, and security requirement cross-references, see [THREAT_MODEL.md](THREAT_MODEL.md).
+Pattern scanning is a tripwire, not a complete injection defense. The reviewer identity is self-declared; pending reviews have no SLA; graph runs are serialized in one process; fast-tracked claims are not sampled for QA; BM25 can miss vocabulary mismatches; the synthetic evaluation does not establish real-world performance; Gemini free-tier limits and data-use terms apply; and the local API does not provide TLS.
+
+For integration steps using the read-only MCP backend, see [`docs/running_with_project_a.md`](docs/running_with_project_a.md).

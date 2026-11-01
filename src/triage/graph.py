@@ -1,6 +1,6 @@
 """LangGraph workflow compilation, topology, and telemetry logging."""
 
-import json
+import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RunnableConfig
 
+from triage.llm import ExecutionBudgetExceeded, check_execution_budget
 from triage.state import TriageState
 
 telemetry_logger = logging.getLogger("triage.workflow")
@@ -26,19 +27,41 @@ def _route_after_decide(state: TriageState) -> str:
     return "review"
 
 
-def _extract_token_usage(result: Any) -> dict[str, int]:
-    """Extract token usage dictionary from node execution result."""
+def _extract_telemetry(result: Any) -> tuple[dict[str, int], str]:
+    """Extract token usage and model metadata from node execution result."""
     if isinstance(result, dict):
         trail = result.get("trail")
         if isinstance(trail, list) and trail:
             last = trail[-1]
             if isinstance(last, dict) and "usage" in last:
                 u = last["usage"]
-                return {
-                    "input_tokens": int(u.get("input_tokens", 0)),
-                    "output_tokens": int(u.get("output_tokens", 0)),
-                }
-    return {"input_tokens": 0, "output_tokens": 0}
+                return (
+                    {
+                        "input_tokens": int(u.get("input_tokens", 0)),
+                        "output_tokens": int(u.get("output_tokens", 0)),
+                    },
+                    str(last.get("model_name") or "none"),
+                )
+    return {"input_tokens": 0, "output_tokens": 0}, "none"
+
+
+def _guardrail_flags(state: dict[str, Any], node_name: str) -> list[str]:
+    """Map internal safety and policy signals to short telemetry codes."""
+    flags = set()
+    if state.get("injection_flags"):
+        flags.add("injection_detected")
+    if state.get("extraction_failed"):
+        flags.add("extraction_failed")
+    if state.get("tool_error"):
+        flags.add("tool_error")
+    if state.get("budget_exhausted"):
+        flags.add("budget_exhausted")
+    state_flags = state.get("guardrail_flags", [])
+    if isinstance(state_flags, list):
+        flags.update(flag for flag in state_flags if isinstance(flag, str))
+    if node_name == "decide" and state.get("route") != "FAST_TRACK":
+        flags.add("policy_gate")
+    return sorted(flags)
 
 
 def _wrap_node_with_telemetry(
@@ -55,73 +78,64 @@ def _wrap_node_with_telemetry(
             thread_id = state.get("thread_id", "")
         run_id = thread_id or claim_id or "run_default"
         t0 = time.perf_counter()
+        result = None
+        budget_exhausted = False
 
         # Execute node function. If LangGraph interrupt() is raised, allow it
         # to bubble up directly without side effects per AGENTS Gotcha 2.
         try:
-            import inspect
-
+            check_execution_budget()
             sig = inspect.signature(fn)
             if len(sig.parameters) >= 2:
                 result = fn(state, config)
             else:
                 result = fn(state)
-        except TypeError:
-            result = fn(state)
+            check_execution_budget()
+        except ExecutionBudgetExceeded:
+            budget_exhausted = True
+            raise
+        finally:
+            latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+            token_usage, model_name = _extract_telemetry(result)
+            cost_usd = round(
+                token_usage["input_tokens"] * GEMINI_INPUT_COST_PER_TOKEN
+                + token_usage["output_tokens"] * GEMINI_OUTPUT_COST_PER_TOKEN,
+                6,
+            )
 
-        latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-        token_usage = _extract_token_usage(result)
-        cost_usd = round(
-            token_usage["input_tokens"] * GEMINI_INPUT_COST_PER_TOKEN
-            + token_usage["output_tokens"] * GEMINI_OUTPUT_COST_PER_TOKEN,
-            6,
-        )
-
-        merged = dict(state)
-        if isinstance(result, dict):
-            merged.update(result)
-
-        guardrail_triggered = bool(
-            merged.get("injection_flags")
-            or merged.get("extraction_failed")
-            or merged.get("tool_error")
-            or merged.get("guardrail_flags")
-            or (node_name == "decide" and merged.get("route") != "FAST_TRACK")
-        )
-
-        final_route = merged.get("route")
-
-        telemetry_event = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "run_id": run_id,
-            "claim_id": claim_id,
-            "node_name": node_name,
-            "latency_ms": latency_ms,
-            "token_usage": token_usage,
-            "cost_usd": cost_usd,
-            "guardrail_triggered": guardrail_triggered,
-            "final_route": final_route,
-        }
-        if node_name == "retrieve" and isinstance(result, dict):
-            telemetry_event["retriever_mode"] = result.get("retriever_mode", "bm25")
-            telemetry_event["retrieval_ms"] = result.get("retrieval_ms", latency_ms)
-        log_context = {
-            "run_id": run_id,
-            "claim_id": claim_id,
-            "node_name": node_name,
-            "latency_ms": latency_ms,
-            "token_usage": token_usage,
-            "cost_usd": cost_usd,
-            "guardrail_triggered": guardrail_triggered,
-            "final_route": final_route,
-        }
-        if node_name == "retrieve" and isinstance(result, dict):
-            log_context["retriever_mode"] = result.get("retriever_mode", "bm25")
-            log_context["retrieval_ms"] = result.get("retrieval_ms", latency_ms)
-        telemetry_logger.info(
-            json.dumps(telemetry_event),
-            extra=log_context,
-        )
+            merged = dict(state)
+            if isinstance(result, dict):
+                merged.update(result)
+            flags = _guardrail_flags(merged, node_name)
+            if budget_exhausted:
+                flags = sorted(set(flags) | {"budget_exhausted"})
+            decision = merged.get("decision")
+            final_route = (
+                decision.get("route_final")
+                if isinstance(decision, dict)
+                else merged.get("route")
+            )
+            extra = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_id,
+                "claim_id": claim_id,
+                "node_name": node_name,
+                "model_name": model_name,
+                "input_tokens": token_usage["input_tokens"],
+                "output_tokens": token_usage["output_tokens"],
+                "latency_ms": latency_ms,
+                "cost_usd": cost_usd,
+                "guardrail_triggered": bool(flags),
+                "guardrail_flags": flags,
+                "final_route": final_route,
+            }
+            if node_name == "retrieve" and isinstance(result, dict):
+                extra["retriever_mode"] = result.get("retriever_mode", "bm25")
+                extra["retrieval_ms"] = result.get("retrieval_ms", latency_ms)
+            telemetry_logger.info(
+                "node_telemetry",
+                extra=extra,
+            )
         return result
 
     return wrapped_node

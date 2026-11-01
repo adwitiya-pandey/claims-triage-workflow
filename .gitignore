@@ -11,6 +11,8 @@ __pycache__/
 !.env.example
 keys.json
 *.db
+data/*.db-shm
+data/*.db-wal
 audit/
 logs/
 
