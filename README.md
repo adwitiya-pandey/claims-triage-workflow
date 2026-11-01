@@ -55,8 +55,8 @@ uv sync
 Expected output (trimmed from this session):
 
 ```text
-Resolved 74 packages in 147ms
-Checked 71 packages in 211ms
+Resolved 74 packages in 3ms
+Checked 71 packages in 2ms
 ```
 
 ```bash
@@ -67,8 +67,8 @@ Expected output (trimmed from this session):
 
 ```text
 All checks passed!
-60 files already formatted
-152 passed, 1 deselected, 2 warnings in 30.71s
+61 files already formatted
+152 passed, 1 deselected, 2 warnings in 19.98s
 Claims Triage Evaluation Summary (Mode: replay)
 M1_false_fast_track_rate         : 0.0000 [PASS]
 M2_route_accuracy                : 1.0000 [PASS]
@@ -318,7 +318,7 @@ Node telemetry is a single flat JSON object per event. Claim and note text, prom
 Real sample line captured during the API telemetry test in this session:
 
 ```json
-{"timestamp": "2026-11-01T05:28:11.114423+00:00", "level": "INFO", "logger": "triage.workflow", "node_name": "decide", "output_tokens": 0, "guardrail_triggered": false, "cost_usd": 0.0, "latency_ms": 0.18, "claim_id": "CLM70000001", "model_name": "none", "final_route": "FAST_TRACK", "input_tokens": 0, "guardrail_flags": [], "run_id": "triage-CLM70000001-v1"}
+{"timestamp": "2026-11-01T05:39:37.434202+00:00", "level": "INFO", "logger": "triage.workflow", "cost_usd": 0.0, "input_tokens": 0, "latency_ms": 0.18, "model_name": "none", "claim_id": "CLM70000001", "final_route": "FAST_TRACK", "guardrail_triggered": false, "output_tokens": 0, "guardrail_flags": [], "run_id": "triage-CLM70000001-v1", "node_name": "decide"}
 ```
 
 ## Evaluation and limitations
