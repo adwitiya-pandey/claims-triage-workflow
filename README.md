@@ -12,7 +12,7 @@ The workflow is linear except for the deterministic route gate: only `FAST_TRACK
 
 ```mermaid
 flowchart LR
-    subgraph graph["LangGraph workflow"]
+    subgraph workflow["LangGraph workflow"]
         START([START]) --> intake[intake]
         intake --> extract[extract]
         extract --> fetch_facts[fetch_facts]
@@ -29,7 +29,7 @@ flowchart LR
     retrieve -.-> bm25[BM25 policy retriever]
     review -. pause and resume .-> checkpoint[(SQLite graph checkpointer)]
     finalize -. append-only record .-> decisions[(SQLite decision store)]
-    graph -. one flat JSON event per node .-> telemetry[(JSON telemetry sink: stdout)]
+    workflow -. one flat JSON event per node .-> telemetry[(JSON telemetry sink: stdout)]
 ```
 
 The graph edges are implemented in [`build_graph`](src/triage/graph.py); the conditional edge sends exactly `FAST_TRACK` to `finalize`, and every other route to `review`.
