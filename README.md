@@ -59,6 +59,79 @@ flowchart TD
 
 ---
 
+## RAG pipeline
+
+The retriever keeps the procedure clause pinned first, then ranks only the other
+policy clauses. `RETRIEVER` defaults to `bm25`; `dense` and `hybrid` are opt-in.
+Hybrid uses Reciprocal Rank Fusion with `k=60`. The assessment node still validates
+every citation against retrieved chunk IDs and verbatim clause text.
+
+```mermaid
+flowchart LR
+    query["Query: extracted procedure description + system procedure code"]
+    query --> sanitize["Sanitize before embedding"]
+    query --> bm25["BM25 rank"]
+    sanitize --> dense["Gemini retrieval-query embedding"]
+    dense --> dense_rank["Exact cosine rank over non-procedure clauses"]
+    bm25 --> select["Select by RETRIEVER mode"]
+    dense_rank --> select
+    select --> rrf["RRF when mode is hybrid"]
+    rrf --> pin["Prepend matching procedure clause"]
+    select --> pin
+    pin --> assess["Assess retrieved clauses"]
+    assess --> cite["Validate citation IDs and verbatim quotes"]
+    cite --> review["Store trace in state; include it in review packet"]
+```
+
+### Retrieval experiment
+
+The gold file records only procedure-code query handles so claim-derived text is not
+duplicated on disk. The evaluator combines the corresponding synthetic gold
+procedure description in memory and does not print or persist that query. The
+retrieval trace contains chunk IDs and scores only.
+
+| Mode | Recall@1 | Recall@3 | Recall@4 | MRR | nDCG@4 | Cases | Status |
+|---|---:|---:|---:|---:|---:|---:|---|
+| BM25 | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured 2026-11-01 |
+| Dense (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured 2026-11-01 |
+| Hybrid (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured 2026-11-01 |
+
+BM25 remains the default because the measured dense and hybrid retrieval quality is
+functionally identical on this 30-clause synthetic corpus. The exact NumPy dense
+index is available for the experiment, but there is no evidence of improvement at
+this corpus size. Retrieval evaluation uses [retrieval_gold.jsonl](evals/retrieval_gold.jsonl)
+and [retrieval_eval.py](evals/retrieval_eval.py).
+
+The measured retrieval command was `uv run python -m evals.retrieval_eval --mode all --allow-live`;
+its output was:
+
+```text
+bm25    Recall@1=0.9302 Recall@3=1.0000 Recall@4=1.0000 MRR=1.0000 nDCG@4=1.0000 cases=43
+dense   Recall@1=0.9302 Recall@3=1.0000 Recall@4=1.0000 MRR=1.0000 nDCG@4=1.0000 cases=43
+hybrid  Recall@1=0.9302 Recall@3=1.0000 Recall@4=1.0000 MRR=1.0000 nDCG@4=1.0000 cases=43
+```
+
+### Configuration and limits
+
+- `RETRIEVER`: `bm25` (default), `dense`, or `hybrid`.
+- `EMBEDDING_MODEL`: defaults to `gemini-embedding-001`. The current official guide
+  identifies `gemini-embedding-2` as latest, but this implementation follows the
+  requested `RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY` task types supported by
+  `gemini-embedding-001`; see [sdk_notes.md](docs/sdk_notes.md).
+- The dense index and hashed embedding cache are generated under
+  `data/embeddings/`. [build_index.py](scripts/build_index.py) rebuilds the exact
+  NumPy index after document vectors are available. An uncached Gemini request
+  requires `--allow-live` and an explicitly configured key; no live build has been
+  run in this session.
+- The corpus is tiny and synthetic. Exact NumPy cosine search is sufficient for
+  this experiment; larger corpora need a separately evaluated ANN/vector service.
+- Gemini free-tier terms may allow prompts to be used to improve products. Only
+  synthetic claims may be sent; this project must never use real claimant data.
+- Embedding cache keys are hashes and values are vectors; claim-derived query text
+  is never cached, logged, or included in retrieval traces.
+
+---
+
 ## 2. Repository Structure
 
 ```
@@ -77,6 +150,7 @@ claims-triage-workflow-2/
 │   ├── cassettes/               # Deterministic LLM response cassettes
 │   │   ├── cassette.jsonl       # 85 canonical recorded requests/responses
 │   │   └── test_cassette.jsonl  # Fixture for unit testing cassette replay
+│   ├── embeddings/              # Generated hashed cache, index.npz, and manifest
 │   ├── policy/                  # Policy corpus and requirements
 │   │   ├── clauses.md           # 30 health insurance policy clauses
 │   │   └── required_documents.json # Document requirements per procedure code
@@ -90,12 +164,15 @@ claims-triage-workflow-2/
 ├── evals/
 │   ├── gates.json               # CI pass/fail threshold criteria for M1 through M8
 │   ├── run_eval.py              # Quantitative evaluation engine (oracle / replay / live)
-│   └── reports/                 # Evaluation test output summaries (JSON and Markdown)
+│   ├── retrieval_eval.py        # Recall, MRR, and nDCG retrieval evaluation
+│   ├── retrieval_gold.jsonl     # Synthetic retrieval relevance labels
+│   └── reports/                 # Eval summaries, including retrieval.md
 ├── prompts/
 │   ├── assess_v1.txt            # Versioned prompt template for policy assessment
 │   └── extract_v1.txt           # Versioned prompt template for entity extraction
 ├── scripts/
 │   ├── build_scenario_db.py     # Compiles data/cases/*.json into data/scenario.db
+│   ├── build_index.py           # Builds the corpus-hash-bound NumPy embedding index
 │   └── record_cassettes.py      # Records Gemini LLM calls into data/cassettes/cassette.jsonl
 ├── src/
 │   └── triage/
@@ -103,18 +180,20 @@ claims-triage-workflow-2/
 │       ├── __main__.py          # CLI entry point for uvicorn server
 │       ├── api.py               # FastAPI REST endpoints with Bearer auth & error masking
 │       ├── config.py            # Pydantic/dataclass configuration and secret handling
+│       ├── embeddings.py        # Gemini, deterministic hash, and hashed-cache embedders
 │       ├── graph.py             # LangGraph StateGraph topology, routing, and telemetry
 │       ├── injection.py         # 13 regex heuristics + zero-width character scanner
 │       ├── llm.py               # Canonical JSON hashing, Gemini client, cassette replay
 │       ├── logging_setup.py     # Structured JSON log formatter (S7 PHI/PII protection)
 │       ├── models.py            # Strict Pydantic v2 schemas (extra="forbid")
 │       ├── nodes.py             # 8 workflow node implementations (intake to finalize)
-│       ├── retrieval.py         # BM25 policy clause ranking and grounding engine
+│       ├── retrieval.py         # BM25, dense, hybrid rankings, and citation grounding
 │       ├── rules.py             # Deterministic pure Python routing rule engine
 │       ├── sanitize.py          # Control character stripping and length limiting
 │       ├── service.py           # TriageService orchestrator, locking, and idempotency
 │       ├── state.py             # LangGraph TriageState schema (plain JSON-serializable)
 │       ├── store.py             # Append-only SQLite store with SHA-256 state hashing
+│       ├── vectorstore.py       # Exact NumPy cosine search and index manifest
 │       └── tools/
 │           ├── base.py          # ClaimsTools typing protocol & ToolError definitions
 │           ├── fixture_backend.py # In-memory / JSON fixture backend for offline tests
@@ -132,10 +211,16 @@ claims-triage-workflow-2/
 │   ├── test_nodes_extract.py    # Entity extraction and retry behavior tests
 │   ├── test_nodes_fetch_facts.py# MCP error code mapping and note scanning tests
 │   ├── test_retrieval.py        # BM25 determinism and tie-breaking tests
+│   ├── test_dense_retrieval.py  # Dense/hybrid ranking and fallback tests
+│   ├── test_embeddings.py       # Offline embedding and cache tests
+│   ├── test_readme_tree.py      # Repository tree documentation stays current
+│   ├── test_retrieval_eval.py   # Retrieval metric tests
+│   ├── test_retrieval_node.py   # Retrieval node trace and telemetry tests
 │   ├── test_rules.py            # All 18 deterministic rule scenarios
 │   ├── test_sanitize.py         # Text sanitization and character stripping tests
 │   ├── test_security.py         # S1-S14 security requirements verification
-│   └── test_store_service.py    # Append-only SQLite, versioning, and idempotency tests
+│   ├── test_store_service.py    # Append-only SQLite, versioning, and idempotency tests
+│   └── test_vectorstore.py      # Exact index, persistence, and corpus mismatch tests
 ├── AGENTS.md                    # Autonomous workflow contract and developer constraints
 ├── PROGRESS.md                  # Task-by-task execution and completion status
 ├── pyproject.toml               # Project dependencies, build config, and ruff settings

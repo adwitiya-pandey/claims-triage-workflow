@@ -80,6 +80,10 @@ def test_workflow_node_telemetry_emission(telemetry_setup, caplog):
         )
         assert isinstance(data["latency_ms"], (int, float))
         assert data["latency_ms"] >= 0.0
+        if node_name == "retrieve":
+            assert data["retriever_mode"] == "bm25"
+            assert isinstance(data["retrieval_ms"], (int, float))
+            assert data["retrieval_ms"] >= 0.0
 
         # 2. Token usage & cost telemetry
         token_usage = data.get("token_usage", {})

@@ -85,6 +85,7 @@ def _wrap_node_with_telemetry(
             merged.get("injection_flags")
             or merged.get("extraction_failed")
             or merged.get("tool_error")
+            or merged.get("guardrail_flags")
             or (node_name == "decide" and merged.get("route") != "FAST_TRACK")
         )
 
@@ -101,18 +102,25 @@ def _wrap_node_with_telemetry(
             "guardrail_triggered": guardrail_triggered,
             "final_route": final_route,
         }
+        if node_name == "retrieve" and isinstance(result, dict):
+            telemetry_event["retriever_mode"] = result.get("retriever_mode", "bm25")
+            telemetry_event["retrieval_ms"] = result.get("retrieval_ms", latency_ms)
+        log_context = {
+            "run_id": run_id,
+            "claim_id": claim_id,
+            "node_name": node_name,
+            "latency_ms": latency_ms,
+            "token_usage": token_usage,
+            "cost_usd": cost_usd,
+            "guardrail_triggered": guardrail_triggered,
+            "final_route": final_route,
+        }
+        if node_name == "retrieve" and isinstance(result, dict):
+            log_context["retriever_mode"] = result.get("retriever_mode", "bm25")
+            log_context["retrieval_ms"] = result.get("retrieval_ms", latency_ms)
         telemetry_logger.info(
             json.dumps(telemetry_event),
-            extra={
-                "run_id": run_id,
-                "claim_id": claim_id,
-                "node_name": node_name,
-                "latency_ms": latency_ms,
-                "token_usage": token_usage,
-                "cost_usd": cost_usd,
-                "guardrail_triggered": guardrail_triggered,
-                "final_route": final_route,
-            },
+            extra=log_context,
         )
         return result
 
