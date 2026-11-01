@@ -20,7 +20,11 @@ from triage.llm import (
     load_prompt,
 )
 from triage.models import Assessment, Decision, Extraction, ReviewAction, RuleHit
-from triage.retrieval import compute_corpus_sha256, load_corpus, retrieve
+from triage.retrieval import (
+    compute_corpus_sha256,
+    load_corpus,
+    retrieve_with_trace,
+)
 from triage.rules import evaluate_rules
 from triage.sanitize import sanitize_text
 from triage.state import TriageState
@@ -39,6 +43,10 @@ class NodeDependencies:
     sleep_fn: Callable[[float], None] | None = None
     db_conn: sqlite3.Connection | None = None
     interrupt_fn: Callable[[Any], Any] | None = None
+    embedder: Any | None = None
+    vector_store: Any | None = None
+    embedding_cache_path: str | Path = "data/embeddings/cache.jsonl"
+    vector_index_path: str | Path = "data/embeddings/index.npz"
 
 
 def _load_case_data(claim_id: str, cases_dir: str | Path) -> dict[str, Any] | None:
@@ -399,8 +407,12 @@ def make_nodes(
         }
 
     def retrieve_node(state: TriageState) -> dict[str, Any]:
-        """BM25 retrieval over policy clauses + procedure clause per SPEC 9."""
+        """Retrieve policy clauses, pinning the procedure clause before other hits."""
         started_at = datetime.now(timezone.utc).isoformat()
+        retrieval_started = time.perf_counter()
+        requested_mode = deps.config.RETRIEVER
+        selected_mode = requested_mode
+        guardrail_flags: list[str] = []
 
         # Skip immediately if prerequisites failed
         if (
@@ -411,6 +423,12 @@ def make_nodes(
             ended_at = datetime.now(timezone.utc).isoformat()
             return {
                 "chunks": [],
+                "retrieval_trace": [],
+                "retriever_mode": requested_mode,
+                "retrieval_ms": round(
+                    (time.perf_counter() - retrieval_started) * 1000, 2
+                ),
+                "guardrail_flags": list(state.get("guardrail_flags", [])),
                 "trail": [
                     {
                         "node": "retrieve",
@@ -427,22 +445,67 @@ def make_nodes(
         proc_code = claim_facts.get("procedure_code", "")
 
         query_text = f"{proc_desc} {proc_code}".strip()
-        chunks = retrieve(
+        embedder = deps.embedder
+        vector_store = deps.vector_store
+        is_replay = deps.config.LLM_MODE == "replay"
+        if selected_mode != "bm25" and (embedder is None or vector_store is None):
+            try:
+                from triage.embeddings import CachedEmbedder, GeminiEmbedder
+                from triage.vectorstore import NumpyVectorStore
+
+                corpus = load_corpus()
+                if vector_store is None:
+                    vector_store = NumpyVectorStore.load(
+                        deps.vector_index_path,
+                        expected_corpus_sha256=compute_corpus_sha256(corpus),
+                        expected_model=deps.config.EMBEDDING_MODEL,
+                    )
+                if embedder is None:
+                    embedder = CachedEmbedder(
+                        GeminiEmbedder(
+                            model=deps.config.EMBEDDING_MODEL,
+                            api_key=deps.config.GEMINI_API_KEY,
+                        ),
+                        cache_path=deps.embedding_cache_path,
+                        dimension=768,
+                        replay=is_replay,
+                    )
+            except Exception:
+                if is_replay:
+                    raise
+                selected_mode = "bm25"
+                guardrail_flags.append("dense_unavailable")
+
+        chunks, retrieval_trace, actual_mode, dense_flags = retrieve_with_trace(
             query=query_text,
             procedure_code=proc_code,
             top_k=deps.config.TOP_K,
+            mode=selected_mode,
+            embedder=embedder,
+            vector_store=vector_store,
+            replay=is_replay,
         )
+        guardrail_flags.extend(dense_flags)
 
         ended_at = datetime.now(timezone.utc).isoformat()
+        retrieval_ms = round((time.perf_counter() - retrieval_started) * 1000, 2)
+        accumulated_flags = list(dict.fromkeys(state.get("guardrail_flags", [])))
+        accumulated_flags.extend(
+            flag for flag in guardrail_flags if flag not in accumulated_flags
+        )
         return {
             "chunks": chunks,
+            "retrieval_trace": retrieval_trace,
+            "retriever_mode": actual_mode,
+            "retrieval_ms": retrieval_ms,
+            "guardrail_flags": accumulated_flags,
             "trail": [
                 {
                     "node": "retrieve",
                     "started_at": started_at,
                     "ended_at": ended_at,
                     "outcome": "ok",
-                    "detail_codes": [],
+                    "detail_codes": guardrail_flags,
                 }
             ],
         }
@@ -644,6 +707,7 @@ def make_nodes(
             "analyst_summary": (state.get("assessment") or {}).get("summary"),
             "missing_items": (state.get("assessment") or {}).get("missing_items", []),
             "flags": state.get("injection_flags", []),
+            "retrieval_trace": state.get("retrieval_trace", []),
             "comparison": {
                 "extracted": state.get("extraction"),
                 "system_record": {

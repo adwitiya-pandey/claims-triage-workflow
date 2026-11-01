@@ -68,3 +68,30 @@ This document records the architectural and design decisions for `claims-triage-
 - **Context:** Production agentic AI systems require visibility into node latencies, token consumption, and cost telemetry without leaking sensitive patient health information (PHI).
 - **Decision:** Every node transition in `graph.py` emits structured JSON telemetry (`timestamp`, `run_id`, `claim_id`, `node_name`, `latency_ms`, `token_usage`, `cost_usd`, `guardrail_triggered`, `final_route`). A strict logging formatter (`StructuredJsonFormatter`) enforces a strict metadata allowlist (`ALLOWED_LOG_KEYS`) and strips raw claim text, clinical notes, and prompts.
 - **Consequences:** Complete operational cost monitoring and SIEM compatibility while achieving strict HIPAA/PHI confidentiality.
+
+---
+
+## ADR-008: Explicitly Versioned Dense Embedding Experiment
+
+- **Status:** Accepted
+- **Context:** The official Gemini embeddings guide identifies `gemini-embedding-2` as the latest model, but this experiment explicitly requires the `RETRIEVAL_DOCUMENT` and `RETRIEVAL_QUERY` task types, which the guide documents for `gemini-embedding-001`. Reduced-dimension `gemini-embedding-001` vectors require client-side L2 normalization.
+- **Decision:** Default `EMBEDDING_MODEL` to `gemini-embedding-001`, request 768 dimensions and the asymmetric retrieval task types, and normalize every vector locally. Keep model selection configurable. Do not silently use the newer model with undocumented task-type behavior. The configured environment had no API key, so live `models.list()` availability and live retrieval quality remain unverified.
+- **Consequences:** The required API contract is explicit and reproducible. Moving to `gemini-embedding-2` requires a deliberate task-prefix change, fresh cache/index artifacts, and a new evaluation rather than an implicit model substitution.
+
+---
+
+## ADR-009: Exact NumPy Search for the Small Policy Corpus
+
+- **Status:** Accepted
+- **Context:** The policy corpus contains about 30 clauses. Adding a vector database or approximate-nearest-neighbor service would add operational and dependency cost without a meaningful search-scale benefit for this corpus.
+- **Decision:** Store normalized clause vectors in an `.npz` file and use exact matrix-product cosine search in NumPy. Persist a manifest with the model, vector dimension, corpus SHA-256, and build timestamp; refuse a corpus hash or model mismatch. If the corpus grows to about 10^5 chunks, evaluate local HNSW/IVF approximate search. At about 10^7 chunks, move to a separately operated service such as pgvector or a managed vector database, subject to a new security and operations review.
+- **Consequences:** Current rankings remain exact, deterministic, auditable, and easy to rebuild. Larger-scale retrieval remains a future architecture change and is not introduced here.
+
+---
+
+## ADR-010: Hashed Embedding Cache and Offline Replay
+
+- **Status:** Accepted
+- **Context:** Query text is derived from claim data and must not be persisted. The retrieval experiment must still be replayable without network access.
+- **Decision:** Cache only vectors and SHA-256 keys derived from model, task type, dimension, and text; never store the text in the cache. In replay mode, a missing key raises `EmbeddingCacheMiss`. Outside replay, dense failures fall back to BM25 and add `dense_unavailable` to state guardrail flags.
+- **Consequences:** Cache and index artifacts can support offline experiments without retaining claim-derived query text. Replay fails visibly rather than generating vectors over the network.

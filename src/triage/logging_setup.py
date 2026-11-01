@@ -29,6 +29,8 @@ ALLOWED_LOG_KEYS = {
     "guardrail_triggered",
     "guardrail_flags",
     "final_route",
+    "retriever_mode",
+    "retrieval_ms",
 }
 
 FORBIDDEN_KEYS = {

@@ -1,0 +1,6 @@
+{
+  "built_at": "2026-11-01T07:22:56.396400+00:00",
+  "corpus_sha256": "a658c786776dc33f269fa662ca6fc13c8549c01ee48d7072bfafe28741458ad9",
+  "dimension": 768,
+  "model": "gemini-embedding-001"
+}

@@ -78,6 +78,10 @@ def test_workflow_node_telemetry_emission(telemetry_setup, caplog):
         )
         assert isinstance(record.latency_ms, (int, float))
         assert record.latency_ms >= 0.0
+        if node_name == "retrieve":
+            assert record.retriever_mode == "bm25"
+            assert isinstance(record.retrieval_ms, (int, float))
+            assert record.retrieval_ms >= 0.0
 
         # 2. Token usage & cost telemetry
         assert isinstance(record.input_tokens, int)
@@ -134,3 +138,37 @@ def test_guardrail_triggered_telemetry(telemetry_setup, caplog):
 
     assert decide_data.guardrail_triggered is True
     assert decide_data.final_route in ("ESCALATE", "STANDARD_REVIEW")
+
+
+def test_dense_fallback_flag_is_in_node_telemetry(tmp_path, caplog):
+    class BrokenEmbedder:
+        @staticmethod
+        def embed_query(_text):
+            raise RuntimeError("offline embedding failure")
+
+    conn = sqlite3.connect(tmp_path / "triage.db")
+    init_db(conn)
+    deps = NodeDependencies(
+        tools=FixtureToolsBackend(),
+        config=TriageConfig(LLM_MODE="oracle", RETRIEVER="hybrid"),
+        cases_dir="data/cases",
+        db_conn=conn,
+        embedder=BrokenEmbedder(),
+        vector_store=object(),
+    )
+    app = build_graph(make_nodes(deps), MemorySaver())
+
+    caplog.set_level(logging.INFO, logger="triage.workflow")
+    app.invoke(
+        {"claim_id": "CLM70000001", "thread_id": "thread-dense-fallback"},
+        config={"configurable": {"thread_id": "thread-dense-fallback"}},
+    )
+
+    retrieve_records = [
+        record
+        for record in caplog.records
+        if record.name == "triage.workflow" and record.node_name == "retrieve"
+    ]
+    assert len(retrieve_records) == 1
+    assert retrieve_records[0].retriever_mode == "bm25"
+    assert "dense_unavailable" in retrieve_records[0].guardrail_flags

@@ -1,6 +1,14 @@
 # SDK notes
 
-Pre-filled on 17 Oct 2026 and re-verified on 19 Oct 2026 against installed packages: langgraph 1.2.16, langgraph-checkpoint-sqlite 3.1.2, google-genai 2.31.0, mcp 2.3.0, pydantic 2.14.1, pytest 9.1.1.
+Pre-filled on 17 Oct 2026 and re-verified on 1 Nov 2026 against installed packages: langgraph 1.2.16, langgraph-checkpoint-sqlite 3.1.2, google-genai 2.33.0, mcp 2.3.0, pydantic 2.14.1, pytest 9.1.1.
+
+## Gemini embeddings (verified 1 Nov 2026)
+
+- Installed `google-genai` is 2.33.0. `client.models.embed_content` accepts keyword-only `model`, `contents`, and `config`; `types.EmbedContentConfig` exposes `task_type` and `output_dimensionality`, and `types.ContentEmbedding` exposes `values`.
+- The official [Gemini embeddings guide](https://ai.google.dev/gemini-api/docs/embeddings) identifies `gemini-embedding-2` as the latest model, while `gemini-embedding-001` remains available for text-only use.
+- The guide lists `RETRIEVAL_DOCUMENT` and `RETRIEVAL_QUERY` as supported `gemini-embedding-001` task types and recommends 768, 1536, or 3072 dimensions. It specifically says to manually normalize non-3072 dimensional vectors from `gemini-embedding-001`; our implementation therefore L2-normalizes all returned vectors.
+- For `gemini-embedding-2`, the guide recommends task prefixes for text-only retrieval and says truncated vectors are auto-normalized. This task explicitly requires the `RETRIEVAL_DOCUMENT` and `RETRIEVAL_QUERY` task types, so the implementation defaults to `gemini-embedding-001` rather than silently switching task formats.
+- A live `models.list()` call was not made because no `GEMINI_API_KEY` was configured in the process. Model-list availability therefore remains unverified; no claim text or embedding request was sent.
 
 ## LangGraph and the SQLite checkpointer (verified)
 ```python

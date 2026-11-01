@@ -17,6 +17,8 @@ def test_config_defaults(monkeypatch):
         "MAX_GRAPH_STEPS",
         "RUN_TIMEOUT_SECONDS",
         "MAX_LLM_CALLS_PER_RUN",
+        "RETRIEVER",
+        "EMBEDDING_MODEL",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -30,6 +32,8 @@ def test_config_defaults(monkeypatch):
     assert cfg.MAX_GRAPH_STEPS == 25
     assert cfg.RUN_TIMEOUT_SECONDS == 60.0
     assert cfg.MAX_LLM_CALLS_PER_RUN == 4
+    assert cfg.RETRIEVER == "bm25"
+    assert cfg.EMBEDDING_MODEL == "gemini-embedding-001"
 
 
 def test_execution_budgets_load_from_environment(monkeypatch):
@@ -104,3 +108,17 @@ def test_config_never_echoes_secrets(monkeypatch):
     assert "GEMINI_API_KEY=***" in repr_str
     assert "CLAIMS_MCP_KEY=***" in repr_str
     assert "TRIAGE_API_KEY=***" in repr_str
+
+
+def test_retriever_configuration_is_validated(monkeypatch):
+    monkeypatch.setenv("LLM_MODE", "replay")
+    monkeypatch.setenv("RETRIEVER", "hybrid")
+    monkeypatch.setenv("EMBEDDING_MODEL", "gemini-embedding-001")
+    config = TriageConfig.load()
+
+    assert config.RETRIEVER == "hybrid"
+    assert config.EMBEDDING_MODEL == "gemini-embedding-001"
+
+    monkeypatch.setenv("RETRIEVER", "unknown")
+    with pytest.raises(ValueError, match="RETRIEVER must be one of"):
+        TriageConfig.load()

@@ -149,6 +149,30 @@ def _is_transient_error(err: Exception) -> bool:
     return True
 
 
+def create_gemini_client(api_key: str) -> Any:
+    """Create the shared Gemini SDK client while keeping SDK imports in this module."""
+    return genai.Client(api_key=api_key)
+
+
+def embed_content(
+    client: Any,
+    *,
+    model: str,
+    contents: str | list[str],
+    task_type: str,
+    output_dimensionality: int,
+) -> Any:
+    """Call the installed Gemini embedding API with explicit retrieval settings."""
+    return client.models.embed_content(
+        model=model,
+        contents=contents,
+        config=types.EmbedContentConfig(
+            task_type=task_type,
+            output_dimensionality=output_dimensionality,
+        ),
+    )
+
+
 def generate_json(
     *,
     node: str,

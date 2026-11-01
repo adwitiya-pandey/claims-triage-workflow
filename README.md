@@ -38,6 +38,54 @@ The graph edges are implemented in [`build_graph`](src/triage/graph.py); the con
 
 The checked-in [`.env.example`](.env.example) sets `LLM_MODE=replay` and `CLAIMS_TOOLS_BACKEND=fixture`. Replay uses the committed response cassette and fixture data, so offline checks and the API need neither a Gemini key nor a running MCP server. For live Gemini calls, set `LLM_MODE=live` and provide `GEMINI_API_KEY`; for claim data from the `claims-mcp-server` repo, set `CLAIMS_TOOLS_BACKEND=mcp`, `CLAIMS_MCP_URL`, and `CLAIMS_MCP_KEY`. Keep credentials in the ignored local `.env`, never in source control.
 
+## RAG pipeline
+
+The matching procedure clause is always returned first. `RETRIEVER=bm25` remains
+the default; `dense` and `hybrid` are opt-in. Dense ranking uses normalized
+Gemini embeddings and exact NumPy cosine similarity. Hybrid combines BM25 and
+dense rankings with Reciprocal Rank Fusion (`k=60`), with deterministic
+`chunk_id` tie-breaking. Assessment still validates citation IDs and quoted
+text against retrieved clauses.
+
+```mermaid
+flowchart LR
+    query["Build query from procedure facts"]
+    query --> sanitize["Sanitize query"]
+    query --> bm25["BM25 rank"]
+    sanitize --> dense["Gemini query embedding"]
+    dense --> cosine["Exact cosine rank"]
+    bm25 --> mode["Select RETRIEVER mode"]
+    cosine --> mode
+    mode --> rrf["RRF when hybrid"]
+    rrf --> pin["Pin procedure clause first"]
+    mode --> pin
+    pin --> assess["Assess retrieved clauses"]
+    assess --> cite["Validate citation IDs and quotes"]
+    cite --> review["Include retrieval trace in review packet"]
+```
+
+The retrieval evaluator reports BM25, dense, and hybrid quality separately.
+Committed embedding cache/index artifacts support offline evaluation; cache
+misses in replay mode fail rather than contacting Gemini. Query text is
+sanitized before embedding, and claim-derived text is not persisted in the
+gold set, embedding cache, retrieval trace, or logs. See
+[`evals/reports/retrieval.md`](evals/reports/retrieval.md) for the recorded
+comparison and [`scripts/build_index.py`](scripts/build_index.py) for rebuilding
+the exact NumPy index. Live embedding calls require an explicitly configured
+Gemini key and owner approval.
+
+Offline evaluation run on 2026-11-01 using the committed embedding cache/index:
+
+| Mode | Recall@1 | Recall@3 | Recall@4 | MRR | nDCG@4 | Cases |
+|---|---:|---:|---:|---:|---:|---:|
+| BM25 | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 |
+| Dense (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 |
+| Hybrid (`gemini-embedding-001`) | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 |
+
+BM25 remains the default: dense and hybrid matched its retrieval metrics in
+this offline comparison, and no new live Gemini calls or hybrid end-to-end
+cassette recording were performed.
+
 ## Quickstart
 
 Run these commands from the repository root.
@@ -217,6 +265,10 @@ claims-triage-workflow/
 │   ├── cassettes/
 │   │   ├── cassette.jsonl       # Replay responses for model calls
 │   │   └── test_cassette.jsonl  # Small cassette used by unit tests
+│   ├── embeddings/
+│   │   ├── cache.jsonl          # Hashed synthetic embedding cache
+│   │   ├── index.npz            # Exact NumPy cosine index
+│   │   └── manifest.json        # Embedding model and corpus version
 │   ├── policy/
 │   │   └── clauses.md           # Synthetic policy corpus for BM25 retrieval
 │   ├── rules/
@@ -233,12 +285,16 @@ claims-triage-workflow/
 │   ├── gates.json               # Evaluation metric thresholds
 │   ├── reports/
 │   │   ├── latest.json          # Latest measured evaluation results
-│   │   └── latest.md            # Human-readable evaluation report
+│   │   ├── latest.md            # Human-readable evaluation report
+│   │   └── retrieval.md         # Offline retrieval comparison
+│   ├── retrieval_eval.py        # BM25, dense, and hybrid retrieval metrics
+│   ├── retrieval_gold.jsonl     # Synthetic retrieval labels
 │   └── run_eval.py              # Oracle, replay, and live evaluation runner
 ├── prompts/
 │   ├── assess_v1.md             # Versioned policy-assessment prompt
 │   └── extract_v1.md             # Versioned claim-extraction prompt
 ├── scripts/
+│   ├── build_index.py           # Build the local dense retrieval index
 │   ├── build_scenario_db.py     # Build synthetic claims scenario database
 │   └── record_cassettes.py      # Record model responses with explicit opt-in
 ├── src/triage/
@@ -246,18 +302,20 @@ claims-triage-workflow/
 │   ├── __main__.py              # Uvicorn entry point
 │   ├── api.py                   # FastAPI endpoints and API-key enforcement
 │   ├── config.py                # Environment configuration and validation
+│   ├── embeddings.py            # Gemini, hash, and cached embedders
 │   ├── graph.py                 # LangGraph topology and node telemetry
 │   ├── injection.py             # Injection-pattern scanner
 │   ├── llm.py                   # Gemini adapter, replay, and run budgets
 │   ├── logging_setup.py         # Allowlisted JSON log formatter
 │   ├── models.py                # Strict Pydantic data contracts
 │   ├── nodes.py                 # Workflow node implementations
-│   ├── retrieval.py             # Hand-written BM25 policy retrieval
+│   ├── retrieval.py             # BM25, dense, and hybrid policy retrieval
 │   ├── rules.py                 # Deterministic route rules
 │   ├── sanitize.py              # Untrusted-text sanitization
 │   ├── service.py               # Run orchestration and persistence integration
 │   ├── state.py                 # JSON-serializable LangGraph state
 │   ├── store.py                 # Append-only decisions and review records
+│   ├── vectorstore.py           # Exact NumPy vector index
 │   └── tools/
 │       ├── __init__.py          # Tools package initializer
 │       ├── base.py              # Read-only claims tools protocol
@@ -270,6 +328,8 @@ claims-triage-workflow/
 │   ├── test_contract_mcp.py     # Optional live MCP contract checks
 │   ├── test_eval_gates.py       # Evaluation gate regression checks
 │   ├── test_execution_budget.py # Recursion, time, and LLM-call budgets
+│   ├── test_dense_retrieval.py  # Dense/hybrid ranking and fallback behavior
+│   ├── test_embeddings.py       # Embedding normalization and cache behavior
 │   ├── test_graph.py            # Graph routing, review, and checkpointing
 │   ├── test_injection.py        # Injection scanner cases
 │   ├── test_llm.py              # Gemini adapter and cassette behavior
@@ -281,11 +341,14 @@ claims-triage-workflow/
 │   ├── test_nodes_a.py          # Intake, extraction, and fact nodes
 │   ├── test_nodes_b.py          # Retrieval, assessment, review, finalize
 │   ├── test_readme_tree.py      # README tree path existence
+│   ├── test_retrieval_eval.py   # Retrieval metric calculations
 │   ├── test_retrieval.py        # BM25 correctness and determinism
+│   ├── test_retrieval_node.py   # Workflow retrieval and trace behavior
 │   ├── test_rules.py             # Deterministic route rules
 │   ├── test_sanitize.py         # Untrusted-text sanitization
 │   ├── test_smoke.py            # Package import smoke test
-│   └── test_store_service.py    # Persistence and idempotency
+│   ├── test_store_service.py    # Persistence and idempotency
+│   └── test_vectorstore.py      # Index persistence and corpus validation
 ├── pyproject.toml               # Package and tooling configuration
 └── uv.lock                      # Reproducible dependency lockfile
 ```
@@ -314,6 +377,7 @@ Node telemetry is a single flat JSON object per event. Claim and note text, prom
 | `guardrail_triggered` | Whether any guardrail flag was raised |
 | `guardrail_flags` | Short codes such as `injection_detected`, `policy_gate`, or `budget_exhausted` |
 | `final_route` | Current or final route when available |
+| `retriever_mode` / `retrieval_ms` | Retrieval mode and duration on the retrieve node |
 
 Real sample line captured during the API telemetry test in this session:
 

@@ -56,6 +56,9 @@ def _guardrail_flags(state: dict[str, Any], node_name: str) -> list[str]:
         flags.add("tool_error")
     if state.get("budget_exhausted"):
         flags.add("budget_exhausted")
+    state_flags = state.get("guardrail_flags", [])
+    if isinstance(state_flags, list):
+        flags.update(flag for flag in state_flags if isinstance(flag, str))
     if node_name == "decide" and state.get("route") != "FAST_TRACK":
         flags.add("policy_gate")
     return sorted(flags)
@@ -112,22 +115,26 @@ def _wrap_node_with_telemetry(
                 if isinstance(decision, dict)
                 else merged.get("route")
             )
+            extra = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "run_id": run_id,
+                "claim_id": claim_id,
+                "node_name": node_name,
+                "model_name": model_name,
+                "input_tokens": token_usage["input_tokens"],
+                "output_tokens": token_usage["output_tokens"],
+                "latency_ms": latency_ms,
+                "cost_usd": cost_usd,
+                "guardrail_triggered": bool(flags),
+                "guardrail_flags": flags,
+                "final_route": final_route,
+            }
+            if node_name == "retrieve" and isinstance(result, dict):
+                extra["retriever_mode"] = result.get("retriever_mode", "bm25")
+                extra["retrieval_ms"] = result.get("retrieval_ms", latency_ms)
             telemetry_logger.info(
                 "node_telemetry",
-                extra={
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "run_id": run_id,
-                    "claim_id": claim_id,
-                    "node_name": node_name,
-                    "model_name": model_name,
-                    "input_tokens": token_usage["input_tokens"],
-                    "output_tokens": token_usage["output_tokens"],
-                    "latency_ms": latency_ms,
-                    "cost_usd": cost_usd,
-                    "guardrail_triggered": bool(flags),
-                    "guardrail_flags": flags,
-                    "final_route": final_route,
-                },
+                extra=extra,
             )
         return result
 

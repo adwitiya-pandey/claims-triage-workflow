@@ -1,64 +1,78 @@
 # DONE REPORT - claims-triage-workflow
 
-Date: 2026-11-01
-
 ## Status
 
-Completed the claims-triage hardening task on `chore/claims-hardening`. The branch is pushed to `origin/chore/claims-hardening`; `main` was not changed or merged.
+Offline implementation and verification are complete on branch
+`chore/dense-hybrid-retrieval`. The live embedding/index measurement and hybrid
+cassette comparison are pending owner approval before any Gemini calls. The
+default remains `RETRIEVER=bm25`; no dense or hybrid gains are claimed. No commit
+has been created or branch pushed.
 
-## Steps completed
+## Steps
 
-1. **Baseline:** `uv sync`, lint, format, offline tests, and replay evaluation passed before edits.
-2. **Runtime telemetry:** logging is initialized from both `__main__.main()` and `api.create_app()`. Node telemetry is flat, allowlisted JSON with model/token/cost and guardrail fields. Runtime tests cover clean and injection claims.
-3. **Execution budgets:** configurable graph recursion, wall-clock, and LLM-call limits fail closed to a persisted `ESCALATE` decision and emit `budget_exhausted`.
-4. **README and ignore rules:** corrected auth and port instructions, documented offline setup and guardrails, refreshed the repository tree and added its path-existence test, updated measured output and a real telemetry sample, and ignored SQLite WAL/SHM files. The Mermaid diagram was verified in the GitHub preview after correcting its subgraph identifier.
-5. **Final verification:** repeated the baseline checks, started the API, ran the README curl sequence, confirmed successful review resume and stdout telemetry, then pushed the task branch.
-
-## Commands and verification results
-
-| Check | Result |
+| Step | Result |
 |---|---|
-| `uv sync` | PASS; resolved 74 packages and checked 71 |
-| `uv run ruff check .` | PASS on all eight full check runs |
-| `uv run ruff format --check .` | PASS on all eight full check runs; 61 files formatted in the latest run |
-| `uv run pytest -q -m "not integration"` | PASS on all eight full check runs; 152 passed, 1 integration test deselected, 0 failures per run |
-| `uv run python -m evals.run_eval --mode replay` | PASS on all eight full check runs; all configured gates passed |
-| Focused logging/budget/config/README tests | PASS; 14 passed |
-| API command and README curl examples | PASS on final run; health, four triage requests, pending-review listing, and review resume returned expected results |
-| API stdout telemetry | PASS; 30 JSON node events observed in the final curl run, including all expected workflow node names |
-| GitHub Mermaid preview | PASS after fix; the final branch preview rendered the diagram |
-| Branch push | PASS; `origin/chore/claims-hardening` updated, no merge or push to `main` |
+| 0. Baseline | Completed: environment sync, offline checks, and replay evaluation passed. |
+| 1. Retrieval gold set and metrics | Completed for 43 synthetic cases; BM25 metrics recorded. CASE-43 is flagged for owner review because retrieval is skipped for this missing-claim scenario. |
+| 2. Embedders | Completed: Gemini, deterministic hash, normalized cache, sanitization, and replay-miss behavior are implemented and covered offline. |
+| 3. Vector store | Completed: exact NumPy cosine index and corpus/model manifest validation are implemented and covered offline. |
+| 4. Hybrid retrieval | Completed: opt-in dense/hybrid modes, RRF, pinned procedure clause, trace/state/review packet, telemetry, and non-replay fallback are implemented. |
+| 5. Offline tests | Completed: offline suite passes; socket connections are blocked in the offline hash-embedder test. |
+| 6. Measure and decide | Pending owner approval for live Gemini embedding calls and cassette recording. Dense/hybrid are not measured; BM25 remains default. |
+| 7. Documentation | Completed for the offline implementation and measurement status. README tree test added. |
 
-The test runs reported two existing deprecation warnings (Google GenAI typing and Starlette's 422 status constant); neither caused a failure.
+## Commands and results
+
+- `uv sync` - passed during baseline setup.
+- `uv run ruff check . && uv run ruff format --check . && uv run pytest -q -m "not integration"` - passed: 162 passed, 1 deselected, 2 warnings.
+- `uv run python -m evals.run_eval --mode oracle` - passed; all eight CI gates passed.
+- `uv run python -m evals.run_eval --mode replay` - passed; all eight CI gates passed.
+- `uv run python -m evals.retrieval_eval --mode bm25` - passed: Recall@1 0.9302, Recall@3 1.0000, Recall@4 1.0000, MRR 1.0000, nDCG@4 1.0000, 43 cases.
+- `uv run python scripts/build_index.py --help` - passed; options inspected without network access.
+- `git diff --check` - passed.
+
+The initial lint/format/test command stopped at a formatting check in
+`evals/retrieval_eval.py`; the file was formatted, then the complete command
+above passed. Oracle and replay evaluations were rerun sequentially after an
+initial concurrent run to avoid races while writing the shared `latest`
+evaluation report.
+
+## Retrieval metrics
+
+| Mode | Recall@1 | Recall@3 | Recall@4 | MRR | nDCG@4 | Cases | Status |
+|---|---:|---:|---:|---:|---:|---:|---|
+| BM25 | 0.9302 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 43 | Measured |
+| Dense (`gemini-embedding-001`) | not measured | not measured | not measured | not measured | not measured | not measured | Requires authorized live embeddings/index |
+| Hybrid (`gemini-embedding-001`) | not measured | not measured | not measured | not measured | not measured | not measured | Requires authorized live embeddings/index |
+
+The retrieval gold set uses the expected chunk IDs in each synthetic case's
+gold assessment. CASE-43 is the only label marked uncertain: the case has a gold
+procedure citation, but the live workflow skips retrieval after the claim is
+found missing. Please review whether it should remain included in retrieval
+quality metrics.
 
 ## Files changed
 
-- `.env.example`
-- `.gitignore`
-- `README.md`
-- `src/triage/__main__.py`
-- `src/triage/api.py`
-- `src/triage/config.py`
-- `src/triage/graph.py`
-- `src/triage/llm.py`
-- `src/triage/logging_setup.py`
-- `src/triage/nodes.py`
-- `src/triage/service.py`
-- `tests/test_config.py`
-- `tests/test_execution_budget.py`
-- `tests/test_logging_runtime.py`
-- `tests/test_logging_telemetry.py`
-- `tests/test_readme_tree.py`
-- `DONE REPORT - claims-triage-workflow.md`
+- Retrieval/evaluation: `evals/retrieval_gold.jsonl`,
+  `evals/retrieval_eval.py`, `evals/reports/retrieval.md`,
+  `src/triage/retrieval.py`.
+- Embeddings/index: `src/triage/embeddings.py`, `src/triage/vectorstore.py`,
+  `scripts/build_index.py`, `src/triage/llm.py`, `pyproject.toml`, `uv.lock`.
+- Workflow/config/telemetry: `src/triage/config.py`, `src/triage/graph.py`,
+  `src/triage/nodes.py`, `src/triage/state.py`, `src/triage/logging_setup.py`,
+  `.env.example`.
+- Tests: `tests/test_config.py`, `tests/test_dense_retrieval.py`,
+  `tests/test_embeddings.py`, `tests/test_logging_telemetry.py`,
+  `tests/test_readme_tree.py`, `tests/test_retrieval_eval.py`,
+  `tests/test_retrieval_node.py`, `tests/test_vectorstore.py`.
+- Documentation: `README.md`, `docs/decisions.md`, `docs/sdk_notes.md`, and this
+  report.
 
-## Skipped or unverified
+## Not completed
 
-- The MCP integration test was deselected by the required `-m "not integration"` selector; Project A was not started for this task.
-- Live Gemini calls were not made. Unit tests and replay evaluation remained offline.
-- PowerShell equivalents are included in the README but could not be executed because neither `pwsh` nor `powershell` is installed in this Linux environment.
-- The first API health probe raced server startup and failed to connect; the retry returned HTTP 200 and all subsequent curl requests passed.
-- The first GitHub Mermaid preview reported a syntax error; the subgraph identifier was fixed, the branch was pushed again, and the final preview rendered successfully.
-
-## Owner review
-
-Please review the branch diff and the README's PowerShell examples, which remain unverified on an actual PowerShell runtime. No further design decision is needed for this task.
+- No Gemini `models.list()` request, live embedding calls, cache/index artifact
+  generation, hybrid end-to-end cassette recording, or dense/hybrid quality
+  measurement was performed.
+- No commit or push was performed. The live measurement step remains blocked
+  pending owner approval; after that step and final verification, commits and a
+  branch-only push can be completed.
