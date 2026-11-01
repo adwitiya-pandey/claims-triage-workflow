@@ -1,6 +1,5 @@
 """Tests for structured JSON workflow logging and cost telemetry."""
 
-import json
 import logging
 import sqlite3
 
@@ -61,14 +60,13 @@ def test_workflow_node_telemetry_emission(telemetry_setup, caplog):
 
     node_names_seen = []
     for record in records:
-        data = json.loads(record.getMessage())
-        node_name = data.get("node_name")
+        node_name = record.node_name
         node_names_seen.append(node_name)
 
         # 1. Assert all required telemetry fields exist
-        assert "timestamp" in data
-        assert data["run_id"] == "thread-test-telemetry"
-        assert data["claim_id"] == "CLM70000001"
+        assert record.timestamp
+        assert record.run_id == "thread-test-telemetry"
+        assert record.claim_id == "CLM70000001"
         assert node_name in (
             "intake",
             "extract",
@@ -78,24 +76,28 @@ def test_workflow_node_telemetry_emission(telemetry_setup, caplog):
             "decide",
             "finalize",
         )
-        assert isinstance(data["latency_ms"], (int, float))
-        assert data["latency_ms"] >= 0.0
+        assert isinstance(record.latency_ms, (int, float))
+        assert record.latency_ms >= 0.0
 
         # 2. Token usage & cost telemetry
-        token_usage = data.get("token_usage", {})
-        assert "input_tokens" in token_usage
-        assert "output_tokens" in token_usage
-        assert isinstance(data["cost_usd"], (int, float))
-        assert data["cost_usd"] >= 0.0
+        assert isinstance(record.input_tokens, int)
+        assert isinstance(record.output_tokens, int)
+        assert isinstance(record.cost_usd, (int, float))
+        assert record.cost_usd >= 0.0
 
         # 3. Guardrail and route
-        assert isinstance(data["guardrail_triggered"], bool)
+        assert isinstance(record.guardrail_triggered, bool)
+        assert isinstance(record.guardrail_flags, list)
         if node_name == "finalize":
-            assert data["final_route"] == "FAST_TRACK"
+            assert record.final_route == "FAST_TRACK"
+        if node_name in {"extract", "assess"}:
+            assert record.model_name == "gemini-3.8-flash"
 
         # 4. Strict security compliance: zero forbidden keys
         for key in FORBIDDEN_KEYS:
-            assert key not in data, f"Forbidden key {key} leaked into telemetry JSON"
+            assert not hasattr(record, key), (
+                f"Forbidden key {key} leaked into telemetry event"
+            )
 
     assert "intake" in node_names_seen
     assert "extract" in node_names_seen
@@ -126,13 +128,9 @@ def test_guardrail_triggered_telemetry(telemetry_setup, caplog):
         pass
 
     records = [r for r in caplog.records if r.name == "triage.workflow"]
-    decide_records = [
-        json.loads(r.getMessage())
-        for r in records
-        if json.loads(r.getMessage()).get("node_name") == "decide"
-    ]
+    decide_records = [r for r in records if r.node_name == "decide"]
     assert decide_records, "No decide node telemetry recorded"
     decide_data = decide_records[0]
 
-    assert decide_data["guardrail_triggered"] is True
-    assert decide_data["final_route"] in ("ESCALATE", "STANDARD_REVIEW")
+    assert decide_data.guardrail_triggered is True
+    assert decide_data.final_route in ("ESCALATE", "STANDARD_REVIEW")

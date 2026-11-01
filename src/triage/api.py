@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from triage.config import TriageConfig
+from triage.logging_setup import setup_logging
 from triage.models import ClaimId, ReviewAction, StrictBaseModel
 from triage.service import TriageService, get_service
 
@@ -28,6 +29,7 @@ def create_app(
 ) -> FastAPI:
     """Application factory for claims triage REST API."""
     cfg = config or TriageConfig.load()
+    setup_logging(cfg.LOG_LEVEL)
     svc = service or get_service()
 
     app = FastAPI(
