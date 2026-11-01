@@ -1,5 +1,6 @@
 """Configuration settings for claims triage with secure secret handling."""
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,9 @@ class TriageConfig:
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 8800
     LOG_LEVEL: str = "INFO"
+    MAX_GRAPH_STEPS: int = 25
+    RUN_TIMEOUT_SECONDS: float = 60.0
+    MAX_LLM_CALLS_PER_RUN: int = 4
 
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> "TriageConfig":
@@ -59,6 +63,9 @@ class TriageConfig:
             API_HOST=os.getenv("API_HOST", "127.0.0.1"),
             API_PORT=int(os.getenv("API_PORT", "8800")),
             LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
+            MAX_GRAPH_STEPS=int(os.getenv("MAX_GRAPH_STEPS", "25")),
+            RUN_TIMEOUT_SECONDS=float(os.getenv("RUN_TIMEOUT_SECONDS", "60")),
+            MAX_LLM_CALLS_PER_RUN=int(os.getenv("MAX_LLM_CALLS_PER_RUN", "4")),
         )
         cfg.validate()
         return cfg
@@ -99,6 +106,12 @@ class TriageConfig:
             raise ValueError("MIN_EXTRACT_CONFIDENCE must be between 0.0 and 1.0")
         if self.TOP_K < 1:
             raise ValueError("TOP_K must be at least 1")
+        if self.MAX_GRAPH_STEPS < 1:
+            raise ValueError("MAX_GRAPH_STEPS must be at least 1")
+        if not math.isfinite(self.RUN_TIMEOUT_SECONDS) or self.RUN_TIMEOUT_SECONDS <= 0:
+            raise ValueError("RUN_TIMEOUT_SECONDS must be positive")
+        if self.MAX_LLM_CALLS_PER_RUN < 1:
+            raise ValueError("MAX_LLM_CALLS_PER_RUN must be at least 1")
 
     def __repr__(self) -> str:
         """String representation masking secret fields."""

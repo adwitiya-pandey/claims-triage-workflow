@@ -254,6 +254,7 @@ def generate_json(
                 config=gen_config,
             )
         except Exception as exc:
+            check_execution_budget()
             last_err = exc
             if not _is_transient_error(exc):
                 raise
